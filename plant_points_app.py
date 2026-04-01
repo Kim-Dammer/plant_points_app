@@ -14,6 +14,7 @@ from kivy.core.window import Window
 
 Window.clearcolor = (0.92, 0.97, 0.92, 1)
 
+
 class SearchableDropDown(TextInput):
     options = ListProperty([])
 
@@ -30,10 +31,14 @@ class SearchableDropDown(TextInput):
         self.cursor_color = (0.2, 0.6, 0.2, 1)
         self.padding_y = [10, 10]
 
-    def on_text(self, instance, value):
+    # Prefixing 'instance' with '_' tells the linter we are ignoring it on purpose
+    def on_text(self, _instance, value):
         self.dropdown.clear_widgets()
         if value:
-            filtered_options = [opt for opt in self.options if value.lower() in str(opt[0]).lower()]
+            filtered_options = [
+                opt for opt in self.options 
+                if value.lower() in str(opt[0]).lower()
+            ]
         else:
             filtered_options = self.options
         
@@ -45,7 +50,8 @@ class SearchableDropDown(TextInput):
                 background_color=(0.6, 0.9, 0.6, 1), 
                 color=(0.92, 0.97, 0.92, 1)
             )
-            btn.bind(on_release=lambda btn_instance, opt=option: self.select_option(opt))
+            # Used '_' for the unused button instance warning
+            btn.bind(on_release=lambda _, opt=option: self.select_option(opt))
             self.dropdown.add_widget(btn)
 
         if filtered_options and self.focus:
@@ -55,11 +61,11 @@ class SearchableDropDown(TextInput):
             self.dropdown.dismiss()
 
     def select_option(self, selected_item):
-        self.text = str("") 
+        self.text = ""  # Removed the redundant str()
         self.dropdown.dismiss()
         self.on_plant_selected(selected_item)
     
-    def on_focus(self, instance, is_focused):
+    def on_focus(self, _instance, is_focused):
         if is_focused:
             self.on_text(self, self.text)
         else:
@@ -74,7 +80,6 @@ class PlantTrackerLayout(BoxLayout):
         self.padding = 10
 
         self.save_file = 'eaten_plants_data.json'
-
         self.current_week_key = self.get_current_week_string()
         self.all_history = self.load_progress()
 
@@ -87,10 +92,13 @@ class PlantTrackerLayout(BoxLayout):
         self.eaten_plants = self.all_history[self.current_week_key]
         plant_list = self.load_plants_from_csv('plant_database.csv')
 
-        # --- UI BUILD ---
+        self.build_ui(plant_list)
+
+    def build_ui(self, plant_list):
+        """Modularized method to handle all UI widget creation."""
         self.score_label = Label(
             text="Plant Points: 0", 
-            font_size=42, 
+            font_size=38, 
             bold=True,
             color=(0.15, 0.45, 0.15, 1),
             size_hint_y=0.15
@@ -119,27 +127,42 @@ class PlantTrackerLayout(BoxLayout):
         self.list_title.bind(size=self.list_title.setter('text_size'))
         self.add_widget(self.list_title)
 
-        self.scroll_view = ScrollView(size_hint_y=0.45) # Reduced size to fit heatmap
+        self.scroll_view = ScrollView(size_hint_y=0.45) 
         
-        self.list_label = Label(
-            text="", 
-            font_size=18,
-            color=(0.1, 0.1, 0.1, 1),
-            halign="left", 
-            valign="top",
-            size_hint_y=None
+        #Two columns
+        self.list_container = BoxLayout(orientation='horizontal', size_hint_y=None)
+        self.list_container.bind(minimum_height=self.list_container.setter('height'))
+        
+        # Left column: Daily breakdown
+        self.daily_label = Label(
+            text="", font_size=16, color=(0.1, 0.1, 0.1, 1),
+            halign="left", valign="top", size_hint_y=None, markup=True,
+            pos_hint={'top': 1}
         )
-        self.list_label.bind(
-            width=lambda *x: self.list_label.setter('text_size')(self.list_label, (self.list_label.width, None)),
-            texture_size=lambda *x: self.list_label.setter('height')(self.list_label, self.list_label.texture_size[1])
+        self.daily_label.bind(
+            width=lambda *args: self.daily_label.setter('text_size')(self.daily_label, (self.daily_label.width, None)),
+            texture_size=lambda *args: self.daily_label.setter('height')(self.daily_label, self.daily_label.texture_size[1])
         )
         
-        self.scroll_view.add_widget(self.list_label)
+        # Right column: Totals
+        self.totals_label = Label(
+            text="", font_size=16, color=(0.1, 0.1, 0.1, 1),
+            halign="left", valign="top", size_hint_y=None, markup=True,
+            pos_hint={'top': 1}
+        )
+        self.totals_label.bind(
+            width=lambda *args: self.totals_label.setter('text_size')(self.totals_label, (self.totals_label.width, None)),
+            texture_size=lambda *args: self.totals_label.setter('height')(self.totals_label, self.totals_label.texture_size[1])
+        )
+        
+        self.list_container.add_widget(self.daily_label)
+        self.list_container.add_widget(self.totals_label)
+        self.scroll_view.add_widget(self.list_container)
         self.add_widget(self.scroll_view)
 
         # --- HEATMAP UI ---
         self.heatmap_title = Label(
-            text="Activity Heatmap (Last 12 Weeks):",
+            text="Activity Heatmap (Scroll for history):",
             font_size=16,
             bold=True,
             color=(0.3, 0.4, 0.3, 1),
@@ -151,24 +174,41 @@ class PlantTrackerLayout(BoxLayout):
         self.heatmap_title.bind(size=self.heatmap_title.setter('text_size'))
         self.add_widget(self.heatmap_title)
 
-        self.heatmap_container = BoxLayout(orientation='horizontal', spacing=2, size_hint_y=0.2)
-        self.add_widget(self.heatmap_container)
+        self.heatmap_scroll = ScrollView(
+                    size_hint_y=0.2, 
+                    do_scroll_y=False, 
+                    do_scroll_x=True
+                )
+
+        self.heatmap_container = BoxLayout(
+            orientation='horizontal', 
+            spacing=2, 
+            size_hint_x=None,
+        )
+
+        self.heatmap_container.bind(minimum_width=self.heatmap_container.setter('width'))
+        
+        self.heatmap_scroll.add_widget(self.heatmap_container) 
+        self.add_widget(self.heatmap_scroll)
+
 
         self.update_ui()
 
     def get_current_week_string(self):
-        year, week, weekday = date.today().isocalendar()
+        # Replaced the unused 'weekday' variable with '_'
+        year, week, _ = date.today().isocalendar()
         return f"{year}-W{week:02d}"
 
     def load_plants_from_csv(self, filename):
         data = []
-        try:
-            with open(filename, mode='r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    data.append((row['plant_name'].strip(), row['category'].strip()))
-        except FileNotFoundError:
+        if not os.path.exists(filename):
             print(f"Error: {filename} not found.")
+            return data
+
+        with open(filename, mode='r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                data.append((row['plant_name'].strip(), row['category'].strip()))
         return data
 
     def load_progress(self):
@@ -191,14 +231,24 @@ class PlantTrackerLayout(BoxLayout):
         plant_name = plant_tuple[0]
         category = plant_tuple[1]
         
+        day_name = date.today().strftime('%A')
+
         if plant_name not in self.eaten_plants:
-            self.eaten_plants[plant_name] = {'count': 1, 'category': category}
+            self.eaten_plants[plant_name] = {'count': 1, 'category': category, 'daily': {day_name: 1}}
         else:
             self.eaten_plants[plant_name]['count'] += 1
 
-        # 2. Save to daily total for the heatmap
-        today_str = date.today().isoformat() # Gets string like '2026-03-31'
-        if today_str not in self.all_history["daily_counts"]:
+
+            if 'daily' not in self.eaten_plants[plant_name]:
+                self.eaten_plants[plant_name]['daily'] = {}
+                
+            if day_name not in self.eaten_plants[plant_name]['daily']:
+                self.eaten_plants[plant_name]['daily'][day_name] = 0
+                
+            self.eaten_plants[plant_name]['daily'][day_name] += 1
+
+        today_str = date.today().isoformat() 
+        if today_str not in self.all_history.get("daily_counts", {}):
             self.all_history["daily_counts"][today_str] = 0
             
         self.all_history["daily_counts"][today_str] += 1
@@ -208,17 +258,52 @@ class PlantTrackerLayout(BoxLayout):
         
     def update_ui(self):
         self.score_label.text = f"Plant Points: {len(self.eaten_plants)}"
-        history_list = [f"• {name} ({info['count']}x)" for name, info in self.eaten_plants.items()]
-        self.list_label.text = "\n".join(history_list)
+
+        totals_list = ["[b]Weekly Totals:[/b]"]
+        for name, info in self.eaten_plants.items():
+            totals_list.append(f"• {name} ({info.get('count', 0)}x)")
+            
+        # 2. Build the left column (Daily breakdown)
+        days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        daily_breakdown = {day: [] for day in days_order}
+        
+        for name, info in self.eaten_plants.items():
+            for day, count in info.get('daily', {}).items():
+                if day in daily_breakdown:
+                    daily_breakdown[day].append(f"  • {name} ({count}x)")
+                    
+        daily_list = []
+        for day in days_order:
+            if daily_breakdown[day]:
+                daily_list.append(f"[b]{day}[/b]")
+                daily_list.extend(daily_breakdown[day])
+                daily_list.append("") # Add a blank line between days
+                
+        # Fallback for old data logged before this update
+        if not daily_list and self.eaten_plants:
+            daily_list.append("[i]Old data: No daily breakdown available.[/i]")
+
+        self.daily_label.text = "\n".join(daily_list)
+        self.totals_label.text = "\n".join(totals_list)
+
 
         self.heatmap_container.clear_widgets()
         today = date.today()
         monday = today - timedelta(days=today.weekday())
         start_date = monday - timedelta(weeks=11)
 
-        for week in range(12):
-            week_col = BoxLayout(orientation='vertical', spacing=2)
-            
+        total_weeks = 12 
+        start_date = monday - timedelta(weeks=total_weeks - 1)
+
+        for week in range(total_weeks):
+            week_col = BoxLayout(
+                orientation='vertical', 
+                spacing=3, 
+                size_hint_x=None, 
+                width=20
+            )     
+
+
             for day in range(7):
                 current_day = start_date + timedelta(weeks=week, days=day)
                 day_str = current_day.isoformat()
@@ -226,24 +311,34 @@ class PlantTrackerLayout(BoxLayout):
                 count = self.all_history.get("daily_counts", {}).get(day_str, 0)
                 
                 if current_day > today:
-                    color = (1, 1, 1, 0)  # Future days are fully transparent
+                    color = (1, 1, 1, 0)  # Future days are transparent
                 elif count == 0:
-                    color = (0.85, 0.9, 0.85, 1) # Empty / Lightest Green
-                elif count <= 2:
-                    color = (0.6, 0.85, 0.6, 1)  # Light Green
-                elif count <= 4:
-                    color = (0.3, 0.7, 0.3, 1)   # Medium Green
+                    color = (0.85, 0.9, 0.85, 1) # Empty state color
+                elif count >= 12:
+                    color = (0.0, 0.81, 0.82, 1) # Turquoise victory color!
                 else:
-                    color = (0.1, 0.5, 0.1, 1)   # Dark Green (5+ items)
+                    # Continuous green scale for 1 to 11 items
+                    fraction = count / 11.0
+                    
+                    # Start Green (Light): R=0.7, G=0.9, B=0.7
+                    # End Green (Dark): R=0.1, G=0.5, B=0.1
+                    r = 0.7 + (0.1 - 0.7) * fraction
+                    g = 0.9 + (0.5 - 0.9) * fraction
+                    b = 0.7 + (0.1 - 0.7) * fraction
+                    
+                    color = (r, g, b, 1)
 
-                box = Button(background_normal='', background_color=color)
+                box = Button(background_normal='', background_color=color, border=(0, 0, 0, 0))
                 week_col.add_widget(box)
                 
             self.heatmap_container.add_widget(week_col)
 
+        self.heatmap_scroll.scroll_x = 1.0
+
 class MyApp(App):
     def build(self):
         return PlantTrackerLayout()
+
 
 if __name__ == '__main__':
     MyApp().run()
