@@ -266,18 +266,20 @@ class PlantTrackerLayout(BoxLayout):
         # 2. Build the left column (Daily breakdown)
         days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         daily_breakdown = {day: [] for day in days_order}
+        daily_totals = {day: 0 for day in days_order}
         
         for name, info in self.eaten_plants.items():
             for day, count in info.get('daily', {}).items():
                 if day in daily_breakdown:
                     daily_breakdown[day].append(f"  • {name} ({count}x)")
+                    daily_totals[day] += count
                     
         daily_list = []
         for day in days_order:
             if daily_breakdown[day]:
-                daily_list.append(f"[b]{day}[/b]")
+                daily_list.append(f"[b]{day} ({daily_totals[day]})[/b]")
                 daily_list.extend(daily_breakdown[day])
-                daily_list.append("") # Add a blank line between days
+                daily_list.append("") 
                 
         # Fallback for old data logged before this update
         if not daily_list and self.eaten_plants:
