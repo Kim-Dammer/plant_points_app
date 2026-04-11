@@ -2,3 +2,4 @@
 eaten_plants_data.json
 __pycache__/
 plant_database.csv
+.env

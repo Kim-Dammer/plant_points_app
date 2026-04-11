@@ -1,6 +1,6 @@
-import csv
-import json
 import os
+from dotenv import load_dotenv
+import pymysql
 from datetime import date, timedelta
 from kivy.app import App
 from kivy.uix.button import Button
@@ -14,6 +14,12 @@ from kivy.core.window import Window
 
 Window.clearcolor = (0.92, 0.97, 0.92, 1)
 
+load_dotenv()
+DB_HOST = os.getenv('DB_HOST')
+DB_USER = os.getenv('DB_USER')
+DB_PASSWORD = os.getenv('DB_PASSWORD')
+DB_NAME = os.getenv('DB_NAME')
+DB_PORT = 3306
 
 class SearchableDropDown(TextInput):
     options = ListProperty([])
@@ -31,7 +37,6 @@ class SearchableDropDown(TextInput):
         self.cursor_color = (0.2, 0.6, 0.2, 1)
         self.padding_y = [10, 10]
 
-    # Prefixing 'instance' with '_' tells the linter we are ignoring it on purpose
     def on_text(self, _instance, value):
         self.dropdown.clear_widgets()
         if value:
@@ -50,7 +55,6 @@ class SearchableDropDown(TextInput):
                 background_color=(0.6, 0.9, 0.6, 1), 
                 color=(0.92, 0.97, 0.92, 1)
             )
-            # Used '_' for the unused button instance warning
             btn.bind(on_release=lambda _, opt=option: self.select_option(opt))
             self.dropdown.add_widget(btn)
 
@@ -61,7 +65,7 @@ class SearchableDropDown(TextInput):
             self.dropdown.dismiss()
 
     def select_option(self, selected_item):
-        self.text = ""  # Removed the redundant str()
+        self.text = "" 
         self.dropdown.dismiss()
         self.on_plant_selected(selected_item)
     
@@ -79,23 +83,43 @@ class PlantTrackerLayout(BoxLayout):
         self.spacing = 10
         self.padding = 10
 
-        self.save_file = 'eaten_plants_data.json'
-        self.current_week_key = self.get_current_week_string()
-        self.all_history = self.load_progress()
-
-        if self.current_week_key not in self.all_history:
-            self.all_history[self.current_week_key] = {}
-            
-        if "daily_counts" not in self.all_history:
-            self.all_history["daily_counts"] = {}
-
-        self.eaten_plants = self.all_history[self.current_week_key]
-        plant_list = self.load_plants_from_csv('plant_database.csv')
-
+        self.ensure_tables_exist()
+        plant_list = self.get_all_plants()
         self.build_ui(plant_list)
 
+    def get_db_connection(self):
+        """Creates and returns a connection to the remote MySQL database."""
+        return pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=DB_PORT,
+            autocommit=True # Ensures inserts are saved immediately
+        )
+
+    def ensure_tables_exist(self):
+        """A lightweight check to ensure the tables exist in the remote DB."""
+        with self.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('''CREATE TABLE IF NOT EXISTS plants (
+                                    name VARCHAR(255) PRIMARY KEY, 
+                                    category VARCHAR(255)
+                                )''')
+                cursor.execute('''CREATE TABLE IF NOT EXISTS eaten_log (
+                                    id INT AUTO_INCREMENT PRIMARY KEY, 
+                                    log_date DATE, 
+                                    plant_name VARCHAR(255),
+                                    FOREIGN KEY(plant_name) REFERENCES plants(name)
+                                )''')
+
+    def get_all_plants(self):
+        with self.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT name, category FROM plants ORDER BY name")
+                return cursor.fetchall()
+
     def build_ui(self, plant_list):
-        """Modularized method to handle all UI widget creation."""
         self.score_label = Label(
             text="Plant Points: 0", 
             font_size=38, 
@@ -129,11 +153,9 @@ class PlantTrackerLayout(BoxLayout):
 
         self.scroll_view = ScrollView(size_hint_y=0.45) 
         
-        #Two columns
         self.list_container = BoxLayout(orientation='horizontal', size_hint_y=None)
         self.list_container.bind(minimum_height=self.list_container.setter('height'))
         
-        # Left column: Daily breakdown
         self.daily_label = Label(
             text="", font_size=16, color=(0.1, 0.1, 0.1, 1),
             halign="left", valign="top", size_hint_y=None, markup=True,
@@ -144,7 +166,6 @@ class PlantTrackerLayout(BoxLayout):
             texture_size=lambda *args: self.daily_label.setter('height')(self.daily_label, self.daily_label.texture_size[1])
         )
         
-        # Right column: Totals
         self.totals_label = Label(
             text="", font_size=16, color=(0.1, 0.1, 0.1, 1),
             halign="left", valign="top", size_hint_y=None, markup=True,
@@ -187,92 +208,73 @@ class PlantTrackerLayout(BoxLayout):
         )
 
         self.heatmap_container.bind(minimum_width=self.heatmap_container.setter('width'))
-        
         self.heatmap_scroll.add_widget(self.heatmap_container) 
         self.add_widget(self.heatmap_scroll)
 
-
         self.update_ui()
-
-    def get_current_week_string(self):
-        # Replaced the unused 'weekday' variable with '_'
-        year, week, _ = date.today().isocalendar()
-        return f"{year}-W{week:02d}"
-
-    def load_plants_from_csv(self, filename):
-        data = []
-        if not os.path.exists(filename):
-            print(f"Error: {filename} not found.")
-            return data
-
-        with open(filename, mode='r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                data.append((row['plant_name'].strip(), row['category'].strip()))
-        return data
-
-    def load_progress(self):
-        if os.path.exists(self.save_file):
-            with open(self.save_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                
-                if data and not any("-W" in k for k in data.keys()) and "daily_counts" not in data:
-                    return {self.current_week_key: data, "daily_counts": {}}
-                    
-                return data
-        return {}
-
-    def save_progress(self):
-        self.all_history[self.current_week_key] = self.eaten_plants
-        with open(self.save_file, 'w', encoding='utf-8') as f:
-            json.dump(self.all_history, f, indent=4)
 
     def save_plant(self, plant_tuple):
         plant_name = plant_tuple[0]
-        category = plant_tuple[1]
-        
-        day_name = date.today().strftime('%A')
-
-        if plant_name not in self.eaten_plants:
-            self.eaten_plants[plant_name] = {'count': 1, 'category': category, 'daily': {day_name: 1}}
-        else:
-            self.eaten_plants[plant_name]['count'] += 1
-
-
-            if 'daily' not in self.eaten_plants[plant_name]:
-                self.eaten_plants[plant_name]['daily'] = {}
-                
-            if day_name not in self.eaten_plants[plant_name]['daily']:
-                self.eaten_plants[plant_name]['daily'][day_name] = 0
-                
-            self.eaten_plants[plant_name]['daily'][day_name] += 1
-
         today_str = date.today().isoformat() 
-        if today_str not in self.all_history.get("daily_counts", {}):
-            self.all_history["daily_counts"][today_str] = 0
-            
-        self.all_history["daily_counts"][today_str] += 1
+        
+        with self.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # Note: MySQL uses %s instead of ? for parameterized queries
+                cursor.execute("INSERT INTO eaten_log (log_date, plant_name) VALUES (%s, %s)", 
+                               (today_str, plant_name))
 
-        self.save_progress()
         self.update_ui()
         
     def update_ui(self):
-        self.score_label.text = f"Plant Points: {len(self.eaten_plants)}"
+        today = date.today()
+        monday = today - timedelta(days=today.weekday())
+        sunday = monday + timedelta(days=6)
+        
+        with self.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # 1. Fetch Weekly Totals
+                cursor.execute('''SELECT plant_name, COUNT(*) FROM eaten_log 
+                                  WHERE log_date BETWEEN %s AND %s 
+                                  GROUP BY plant_name''', (monday.isoformat(), sunday.isoformat()))
+                weekly_data = cursor.fetchall()
+                
+                # 2. Fetch Daily Breakdown
+                cursor.execute('''SELECT log_date, plant_name, COUNT(*) FROM eaten_log 
+                                  WHERE log_date BETWEEN %s AND %s 
+                                  GROUP BY log_date, plant_name''', (monday.isoformat(), sunday.isoformat()))
+                daily_data = cursor.fetchall()
+                
+                # 3. Fetch Heatmap History
+                total_weeks = 12 
+                start_date = monday - timedelta(weeks=total_weeks - 1)
+                cursor.execute('''SELECT log_date, COUNT(*) FROM eaten_log 
+                                  WHERE log_date >= %s 
+                                  GROUP BY log_date''', (start_date.isoformat(),))
+                
+                # PyMySQL returns date objects, so we convert them back to ISO strings for the dictionary keys
+                heatmap_data = {row[0].isoformat(): row[1] for row in cursor.fetchall()}
 
+        # Update UI: Points
+        self.score_label.text = f"Plant Points: {len(weekly_data)}"
+
+        # Update UI: Weekly Totals
         totals_list = ["[b]Weekly Totals:[/b]"]
-        for name, info in self.eaten_plants.items():
-            totals_list.append(f"• {name} ({info.get('count', 0)}x)")
-            
-        # 2. Build the left column (Daily breakdown)
+        weekly_totals = 0
+        for plant_name, count in weekly_data:
+            totals_list.append(f"• {plant_name} ({count}x)")
+            weekly_totals += count
+        totals_list[0] = f"[b]Weekly Totals ({weekly_totals})[/b]"
+
+        # Update UI: Daily Breakdown
         days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         daily_breakdown = {day: [] for day in days_order}
         daily_totals = {day: 0 for day in days_order}
         
-        for name, info in self.eaten_plants.items():
-            for day, count in info.get('daily', {}).items():
-                if day in daily_breakdown:
-                    daily_breakdown[day].append(f"  • {name} ({count}x)")
-                    daily_totals[day] += count
+        for log_date, plant_name, count in daily_data:
+            # log_date is already a datetime.date object from PyMySQL
+            day_name = log_date.strftime('%A')
+            daily_breakdown[day_name].append(f"  • {plant_name} ({count}x)")
+            daily_totals[day_name] += count
                     
         daily_list = []
         for day in days_order:
@@ -280,22 +282,12 @@ class PlantTrackerLayout(BoxLayout):
                 daily_list.append(f"[b]{day} ({daily_totals[day]})[/b]")
                 daily_list.extend(daily_breakdown[day])
                 daily_list.append("") 
-                
-        # Fallback for old data logged before this update
-        if not daily_list and self.eaten_plants:
-            daily_list.append("[i]Old data: No daily breakdown available.[/i]")
 
         self.daily_label.text = "\n".join(daily_list)
         self.totals_label.text = "\n".join(totals_list)
 
-
+        # Update UI: Heatmap
         self.heatmap_container.clear_widgets()
-        today = date.today()
-        monday = today - timedelta(days=today.weekday())
-        start_date = monday - timedelta(weeks=11)
-
-        total_weeks = 12 
-        start_date = monday - timedelta(weeks=total_weeks - 1)
 
         for week in range(total_weeks):
             week_col = BoxLayout(
@@ -305,12 +297,11 @@ class PlantTrackerLayout(BoxLayout):
                 width=20
             )     
 
-
             for day in range(7):
                 current_day = start_date + timedelta(weeks=week, days=day)
                 day_str = current_day.isoformat()
                 
-                count = self.all_history.get("daily_counts", {}).get(day_str, 0)
+                count = heatmap_data.get(day_str, 0)
                 
                 if current_day > today:
                     color = (1, 1, 1, 0)  # Future days are transparent
@@ -319,15 +310,10 @@ class PlantTrackerLayout(BoxLayout):
                 elif count >= 12:
                     color = (0.0, 0.81, 0.82, 1) # Turquoise victory color!
                 else:
-                    # Continuous green scale for 1 to 11 items
                     fraction = count / 11.0
-                    
-                    # Start Green (Light): R=0.7, G=0.9, B=0.7
-                    # End Green (Dark): R=0.1, G=0.5, B=0.1
                     r = 0.7 + (0.1 - 0.7) * fraction
                     g = 0.9 + (0.5 - 0.9) * fraction
                     b = 0.7 + (0.1 - 0.7) * fraction
-                    
                     color = (r, g, b, 1)
 
                 box = Button(background_normal='', background_color=color, border=(0, 0, 0, 0))
@@ -336,6 +322,7 @@ class PlantTrackerLayout(BoxLayout):
             self.heatmap_container.add_widget(week_col)
 
         self.heatmap_scroll.scroll_x = 1.0
+
 
 class MyApp(App):
     def build(self):
