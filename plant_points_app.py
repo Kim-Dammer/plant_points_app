@@ -8,6 +8,7 @@ from kivy.app import App
 from kivy.uix.popup import Popup
 from kivy.uix.button import Button
 from kivy.uix.label import Label
+from kivy.uix.image import Image
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.textinput import TextInput
 from kivy.uix.dropdown import DropDown
@@ -201,17 +202,54 @@ class PlantTrackerLayout(BoxLayout):
         self.date_indicator.bind(size=self.date_indicator.setter('text_size'))
         self.add_widget(self.date_indicator) 
 
+
+        # Heading with plant icon and points
+
+        heading_container = BoxLayout(
+            orientation='horizontal', 
+            size_hint_x=None,   
+            size_hint_y=None,
+            height=70,
+            spacing=15,       
+            pos_hint={'center_x': 0.5} 
+        )
+
+        heading_container.bind(minimum_width=heading_container.setter('width'))
+
+        self.plant_icon_left = Image(
+            source='plant.png',  
+            size_hint_x=None, 
+            width=35
+        )
+
         self.score_label = Label(
             text="Plant Points: ...", 
             font_size=38, 
             bold=True,
             color=(0.15, 0.45, 0.15, 1),
+            size_hint_x=None,
             size_hint_y=None,
             height=70,
-            halign='center' 
+            halign='center',
+            valign='middle' 
         )
-        self.add_widget(self.score_label)
 
+        self.score_label.bind(texture_size=lambda instance, size: setattr(instance, 'width', size[0]))
+
+        self.plant_icon_right = Image(
+            source='plant.png',  
+            size_hint_x=None, 
+            width=35
+        )
+
+        heading_container.add_widget(self.plant_icon_left)
+        heading_container.add_widget(self.score_label)
+        heading_container.add_widget(self.plant_icon_right)
+
+        self.add_widget(heading_container)
+
+        # Dropdown search for plants
+        
         self.search_input = SearchableDropDown(
             options=plant_list,
             on_plant_selected=self.save_plant, 
@@ -299,32 +337,70 @@ class PlantTrackerLayout(BoxLayout):
 
 
         # Calendar/Date Button (Left)
+        date_btn_container = BoxLayout(
+            orientation='horizontal', 
+            size_hint_x=None, 
+            width=110, 
+            spacing=5  
+        )
+        
+        self.calendar_icon = Image(
+            source='calendar.png',  
+            size_hint_x=None, 
+            width=25
+        )
+
         self.change_date_btn = Button(
-            text="📅 Change Date",
+            text="Change Date",
             size_hint_x=None,
-            width=120,
+            width=85,
             background_normal='',
             background_color=(0, 0, 0, 0),
             color=(0.6, 0.6, 0.6, 1),      
-            font_size=14
+            font_size=14,
+            halign='left',
+            valign='middle'
         )
         self.change_date_btn.bind(on_release=self.open_date_picker)
-        bottom_bar.add_widget(self.change_date_btn)
+        
+        date_btn_container.add_widget(self.calendar_icon)
+        date_btn_container.add_widget(self.change_date_btn)
+        
+        bottom_bar.add_widget(date_btn_container)
 
         bottom_bar.add_widget(Label()) 
         
 
+        delete_btn_container = BoxLayout(
+            orientation='horizontal', 
+            size_hint_x=None, 
+            width=110, 
+            spacing=5  
+        )
+        
+        self.delete_icon = Image(
+            source='trash.png',  
+            size_hint_x=None, 
+            width=25
+        )
+
         self.delete_btn = Button(
-            text="Delete Entries", 
+            text="Delete Entries",
             size_hint_x=None,
-            width=150,
+            width=85,
             background_normal='',
             background_color=(0, 0, 0, 0),
             color=(0.6, 0.6, 0.6, 1),      
-            font_size=14
+            font_size=14,
+            halign='right',
+            valign='middle'
         )
-        self.delete_btn.bind(on_release=self.open_delete_menu) 
-        bottom_bar.add_widget(self.delete_btn)
+        self.delete_btn.bind(on_release=self.open_delete_menu)
+        
+        delete_btn_container.add_widget(self.delete_icon)
+        delete_btn_container.add_widget(self.delete_btn)
+        
+        bottom_bar.add_widget(delete_btn_container)
         
         self.add_widget(bottom_bar)
         self.update_ui()
