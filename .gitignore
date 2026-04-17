@@ -3,3 +3,6 @@ eaten_plants_data.json
 __pycache__/
 plant_database.csv
 .env
+add_plant_to_database.py
+add_plants_yesterday.py
+delete_last_plant.py

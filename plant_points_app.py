@@ -1,7 +1,9 @@
 import os
-from dotenv import load_dotenv
 import pymysql
+import threading
 from datetime import date, timedelta
+from dotenv import load_dotenv
+
 from kivy.app import App
 from kivy.uix.button import Button
 from kivy.uix.label import Label
@@ -11,10 +13,13 @@ from kivy.uix.dropdown import DropDown
 from kivy.uix.scrollview import ScrollView
 from kivy.properties import ListProperty
 from kivy.core.window import Window
+from kivy.clock import Clock
 
 Window.clearcolor = (0.92, 0.97, 0.92, 1)
 
+# Load the variables from the .env file
 load_dotenv()
+
 DB_HOST = os.getenv('DB_HOST')
 DB_USER = os.getenv('DB_USER')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
@@ -82,24 +87,23 @@ class PlantTrackerLayout(BoxLayout):
         self.orientation = 'vertical'
         self.spacing = 10
         self.padding = 10
+        self.first_load = True
 
         self.ensure_tables_exist()
         plant_list = self.get_all_plants()
         self.build_ui(plant_list)
 
     def get_db_connection(self):
-        """Creates and returns a connection to the remote MySQL database."""
         return pymysql.connect(
             host=DB_HOST,
             user=DB_USER,
             password=DB_PASSWORD,
             database=DB_NAME,
             port=DB_PORT,
-            autocommit=True # Ensures inserts are saved immediately
+            autocommit=True 
         )
 
     def ensure_tables_exist(self):
-        """A lightweight check to ensure the tables exist in the remote DB."""
         with self.get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute('''CREATE TABLE IF NOT EXISTS plants (
@@ -121,7 +125,7 @@ class PlantTrackerLayout(BoxLayout):
 
     def build_ui(self, plant_list):
         self.score_label = Label(
-            text="Plant Points: 0", 
+            text="Plant Points: Loading...", 
             font_size=38, 
             bold=True,
             color=(0.15, 0.45, 0.15, 1),
@@ -183,7 +187,7 @@ class PlantTrackerLayout(BoxLayout):
 
         # --- HEATMAP UI ---
         self.heatmap_title = Label(
-            text="Activity Heatmap (Scroll for history):",
+            text="Activity Heatmap :",
             font_size=16,
             bold=True,
             color=(0.3, 0.4, 0.3, 1),
@@ -214,64 +218,76 @@ class PlantTrackerLayout(BoxLayout):
         self.update_ui()
 
     def save_plant(self, plant_tuple):
+        """Immediately frees the UI, saves to DB in the background."""
         plant_name = plant_tuple[0]
         today_str = date.today().isoformat() 
         
-        with self.get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                # Note: MySQL uses %s instead of ? for parameterized queries
-                cursor.execute("INSERT INTO eaten_log (log_date, plant_name) VALUES (%s, %s)", 
-                               (today_str, plant_name))
+        # Start a background thread so the app doesn't freeze
+        threading.Thread(target=self._save_plant_thread, args=(plant_name, today_str), daemon=True).start()
 
-        self.update_ui()
-        
+    def _save_plant_thread(self, plant_name, today_str):
+        """Actually talks to the remote database."""
+        try:
+            with self.get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("INSERT INTO eaten_log (log_date, plant_name) VALUES (%s, %s)", 
+                                   (today_str, plant_name))
+            # After saving, trigger a UI update
+            self.update_ui()
+        except Exception as e:
+            print(f"Database error: {e}")
+
     def update_ui(self):
+        """Starts a background thread to fetch data."""
+        threading.Thread(target=self._fetch_data_thread, daemon=True).start()
+
+    def _fetch_data_thread(self):
+        """Talks to the remote database to pull the latest stats."""
         today = date.today()
         monday = today - timedelta(days=today.weekday())
         sunday = monday + timedelta(days=6)
+        total_weeks = 12 
+        start_date = monday - timedelta(weeks=total_weeks - 1)
         
-        with self.get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                # 1. Fetch Weekly Totals
-                cursor.execute('''SELECT plant_name, COUNT(*) FROM eaten_log 
-                                  WHERE log_date BETWEEN %s AND %s 
-                                  GROUP BY plant_name''', (monday.isoformat(), sunday.isoformat()))
-                weekly_data = cursor.fetchall()
-                
-                # 2. Fetch Daily Breakdown
-                cursor.execute('''SELECT log_date, plant_name, COUNT(*) FROM eaten_log 
-                                  WHERE log_date BETWEEN %s AND %s 
-                                  GROUP BY log_date, plant_name''', (monday.isoformat(), sunday.isoformat()))
-                daily_data = cursor.fetchall()
-                
-                # 3. Fetch Heatmap History
-                total_weeks = 12 
-                start_date = monday - timedelta(weeks=total_weeks - 1)
-                cursor.execute('''SELECT log_date, COUNT(*) FROM eaten_log 
-                                  WHERE log_date >= %s 
-                                  GROUP BY log_date''', (start_date.isoformat(),))
-                
-                # PyMySQL returns date objects, so we convert them back to ISO strings for the dictionary keys
-                heatmap_data = {row[0].isoformat(): row[1] for row in cursor.fetchall()}
+        try:
+            with self.get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute('''SELECT plant_name, COUNT(*) FROM eaten_log 
+                                      WHERE log_date BETWEEN %s AND %s 
+                                      GROUP BY plant_name''', (monday.isoformat(), sunday.isoformat()))
+                    weekly_data = cursor.fetchall()
+                    
+                    cursor.execute('''SELECT log_date, plant_name, COUNT(*) FROM eaten_log 
+                                      WHERE log_date BETWEEN %s AND %s 
+                                      GROUP BY log_date, plant_name''', (monday.isoformat(), sunday.isoformat()))
+                    daily_data = cursor.fetchall()
+                    
+                    cursor.execute('''SELECT log_date, COUNT(*) FROM eaten_log 
+                                      WHERE log_date >= %s 
+                                      GROUP BY log_date''', (start_date.isoformat(),))
+                    heatmap_data = {row[0].isoformat(): row[1] for row in cursor.fetchall()}
 
+            # Safely hand the fetched data back to the main UI thread using Kivy's Clock
+            Clock.schedule_once(lambda dt: self._apply_ui_updates(weekly_data, daily_data, heatmap_data, start_date, total_weeks, today), 0)
+        except Exception as e:
+            print(f"Database error: {e}")
+
+    def _apply_ui_updates(self, weekly_data, daily_data, heatmap_data, start_date, total_weeks, today):
+        """Runs on the main thread. Safely updates the Kivy widgets."""
         # Update UI: Points
         self.score_label.text = f"Plant Points: {len(weekly_data)}"
 
         # Update UI: Weekly Totals
         totals_list = ["[b]Weekly Totals:[/b]"]
-        weekly_totals = 0
         for plant_name, count in weekly_data:
             totals_list.append(f"• {plant_name} ({count}x)")
-            weekly_totals += count
-        totals_list[0] = f"[b]Weekly Totals ({weekly_totals})[/b]"
-
+            
         # Update UI: Daily Breakdown
-        days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        days_order = [(today - timedelta(days=i)).strftime('%A') for i in range(7)]
         daily_breakdown = {day: [] for day in days_order}
         daily_totals = {day: 0 for day in days_order}
         
         for log_date, plant_name, count in daily_data:
-            # log_date is already a datetime.date object from PyMySQL
             day_name = log_date.strftime('%A')
             daily_breakdown[day_name].append(f"  • {plant_name} ({count}x)")
             daily_totals[day_name] += count
@@ -286,29 +302,56 @@ class PlantTrackerLayout(BoxLayout):
         self.daily_label.text = "\n".join(daily_list)
         self.totals_label.text = "\n".join(totals_list)
 
-        # Update UI: Heatmap
-        self.heatmap_container.clear_widgets()
+        # 1. Determine if we need to build the blank boxes (only happens on load or when a new week starts)
+        needs_rebuild = False
+        if not hasattr(self, 'heatmap_buttons'):
+            needs_rebuild = True
+        elif not hasattr(self, 'heatmap_start_date') or self.heatmap_start_date != start_date:
+            needs_rebuild = True
 
+        # 2. Build the structural layout ONCE and save the buttons in a dictionary
+        if needs_rebuild:
+            self.heatmap_container.clear_widgets()
+            self.heatmap_buttons = {}
+            self.heatmap_start_date = start_date
+
+            for week in range(total_weeks):
+                week_col = BoxLayout(
+                    orientation='vertical', 
+                    spacing=3, 
+                    size_hint_x=None, 
+                    width=20
+                )     
+
+                for day in range(7):
+                    current_day = start_date + timedelta(weeks=week, days=day)
+                    day_str = current_day.isoformat()
+                    
+                    box = Button(background_normal='', border=(0, 0, 0, 0))
+                    week_col.add_widget(box)
+                    self.heatmap_buttons[day_str] = box
+                    
+                self.heatmap_container.add_widget(week_col)
+
+        # 3. Now, strictly update the colors of the existing buttons.
+        # This completely leaves Kivy's scrollbar untouched!
         for week in range(total_weeks):
-            week_col = BoxLayout(
-                orientation='vertical', 
-                spacing=3, 
-                size_hint_x=None, 
-                width=20
-            )     
-
             for day in range(7):
                 current_day = start_date + timedelta(weeks=week, days=day)
                 day_str = current_day.isoformat()
                 
+                box = self.heatmap_buttons.get(day_str)
+                if not box:
+                    continue
+
                 count = heatmap_data.get(day_str, 0)
                 
                 if current_day > today:
-                    color = (1, 1, 1, 0)  # Future days are transparent
+                    color = (1, 1, 1, 0) 
                 elif count == 0:
-                    color = (0.85, 0.9, 0.85, 1) # Empty state color
+                    color = (0.85, 0.9, 0.85, 1) 
                 elif count >= 12:
-                    color = (0.0, 0.81, 0.82, 1) # Turquoise victory color!
+                    color = (0.0, 0.81, 0.82, 1) 
                 else:
                     fraction = count / 11.0
                     r = 0.7 + (0.1 - 0.7) * fraction
@@ -316,13 +359,7 @@ class PlantTrackerLayout(BoxLayout):
                     b = 0.7 + (0.1 - 0.7) * fraction
                     color = (r, g, b, 1)
 
-                box = Button(background_normal='', background_color=color, border=(0, 0, 0, 0))
-                week_col.add_widget(box)
-                
-            self.heatmap_container.add_widget(week_col)
-
-        self.heatmap_scroll.scroll_x = 1.0
-
+                box.background_color = color
 
 class MyApp(App):
     def build(self):
