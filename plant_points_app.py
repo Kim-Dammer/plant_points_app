@@ -125,53 +125,92 @@ class PlantTrackerLayout(BoxLayout):
                 cursor.execute("SELECT name, category FROM plants ORDER BY name")
                 return cursor.fetchall()
             
-    def delete_last(self, instance):
-        """Immediately frees UI, tells DB to delete latest log in background."""
-        threading.Thread(target=self._delete_last_thread, daemon=True).start()
+    def open_delete_menu(self, instance):
+        """Fetches plants for the current tracking date and shows a delete list."""
+        track_date_str = self.tracking_date.isoformat()
+        
+        with self.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id, plant_name FROM eaten_log WHERE log_date = %s ORDER BY id DESC", 
+                    (track_date_str,)
+                )
+                items = cursor.fetchall()
 
-    def _delete_last_thread(self):
-        """Executes the deletion and refreshes the UI."""
+        if not items:
+            content = Label(text=f"No entries found for\n{track_date_str}")
+            self.delete_popup = Popup(title="Empty Day", content=content, size_hint=(0.6, 0.3))
+            self.delete_popup.open()
+            return
+
+        layout = BoxLayout(orientation='vertical', spacing=5, padding=10)
+        layout.add_widget(Label(text="Tap a plant to remove it:", size_hint_y=None, height=30))
+        
+        scroll = ScrollView()
+        list_view = BoxLayout(orientation='vertical', size_hint_y=None, spacing=2)
+        list_view.bind(minimum_height=list_view.setter('height'))
+
+        for log_id, name in items:
+            btn = Button(
+                text=f"{name}", 
+                size_hint_y=None, 
+                height=45,
+                background_color=(0.9, 0.4, 0.4, 1) 
+            )
+            btn.bind(on_release=lambda x, lid=log_id: self.confirm_delete(lid))
+            list_view.add_widget(btn)
+
+        scroll.add_widget(list_view)
+        layout.add_widget(scroll)
+        
+        cancel_btn = Button(text="Cancel", size_hint_y=None, height=40)
+        layout.add_widget(cancel_btn)
+
+        self.delete_popup = Popup(title=f"Entries for {track_date_str}", content=layout, size_hint=(0.8, 0.6))
+        cancel_btn.bind(on_release=self.delete_popup.dismiss)
+        self.delete_popup.open()
+
+    def confirm_delete(self, log_id):
+        """Actually removes the record from the DB."""
+        threading.Thread(target=self._delete_item_thread, args=(log_id,), daemon=True).start()
+        if hasattr(self, 'delete_popup'):
+            self.delete_popup.dismiss()
+
+    def _delete_item_thread(self, log_id):
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute("DELETE FROM eaten_log ORDER BY id DESC LIMIT 1")
+                    cursor.execute("DELETE FROM eaten_log WHERE id = %s", (log_id,))
             self.update_ui()
         except Exception as e:
-            print(f"Database error on delete: {e}")
+            print(f"Error deleting entry: {e}")
 
     def build_ui(self, plant_list):
-        # ---------------------------------------------------------
-        # NEW: SUBTLE, CENTERED HEADER SECTION
-        # ---------------------------------------------------------
-        
-        # 1. Subtle Date Tracking Label (Top-Left)
-        # We replace your shares `header_layout` with this standalone subtle label.
+
         self.date_indicator = Label(
             text=f"Tracking: {self.tracking_date.strftime('%b %d, %Y')}",
-            font_size=12,  # Much subtler size
-            bold=False,      # No bold text
-            color=(0.5, 0.5, 0.5, 1), # Subtle grey color
+            font_size=12,  
+            bold=False,      
+            color=(0.5, 0.5, 0.5, 1), 
             size_hint_y=None,
-            height=25, # Thin, subtle label
+            height=25, 
             halign="left",
-            valign="top",  # Push text to the top within its area
-            padding=[10, 5, 0, 0] # Left/Top space from screen edge
+            valign="top",  
+            padding=[10, 5, 0, 0] 
         )
         self.date_indicator.bind(size=self.date_indicator.setter('text_size'))
-        self.add_widget(self.date_indicator) # Add first to appear at very top
+        self.add_widget(self.date_indicator) 
 
-        # 2. Centered Points Label (Middle, Large)
-        # We give it its own full screen-width row. `halign='center'` handles the rest.
         self.score_label = Label(
             text="Plant Points: ...", 
             font_size=38, 
             bold=True,
             color=(0.15, 0.45, 0.15, 1),
             size_hint_y=None,
-            height=70,  # Preserve substantial size
-            halign='center' # Center the text horizontally
+            height=70,
+            halign='center' 
         )
-        self.add_widget(self.score_label) # Add second
+        self.add_widget(self.score_label)
 
         self.search_input = SearchableDropDown(
             options=plant_list,
@@ -272,20 +311,19 @@ class PlantTrackerLayout(BoxLayout):
         self.change_date_btn.bind(on_release=self.open_date_picker)
         bottom_bar.add_widget(self.change_date_btn)
 
-        # Spacer pushes Undo to the right
         bottom_bar.add_widget(Label()) 
         
-        # Undo Button (Right)
+
         self.delete_btn = Button(
-            text="Undo Last Entry",
+            text="Delete Entries", 
             size_hint_x=None,
-            width=120,
+            width=150,
             background_normal='',
             background_color=(0, 0, 0, 0),
             color=(0.6, 0.6, 0.6, 1),      
             font_size=14
         )
-        self.delete_btn.bind(on_release=self.delete_last)
+        self.delete_btn.bind(on_release=self.open_delete_menu) 
         bottom_bar.add_widget(self.delete_btn)
         
         self.add_widget(bottom_bar)
@@ -329,11 +367,10 @@ class PlantTrackerLayout(BoxLayout):
         else:
             self.tracking_date += timedelta(days=day_shift)
         
-        # Update labels
         self.popup_date_label.text = self.tracking_date.strftime('%A, %b %d, %Y')
         self.date_indicator.text = f"Tracking: {self.tracking_date.strftime('%b %d, %Y')}"
         
-        # Make the indicator RED if you are logging in the past/future, GREEN if today
+        # RED if logging in the past/future, GREEN if today
         if self.tracking_date == date.today():
             self.date_indicator.color = (0.3, 0.4, 0.3, 1) 
         else:
@@ -343,7 +380,6 @@ class PlantTrackerLayout(BoxLayout):
     def save_plant(self, plant_tuple):
         """Immediately frees the UI, saves to DB in the background."""
         plant_name = plant_tuple[0]
-        # USE THE SELECTED DATE INSTEAD OF date.today()
         track_date_str = self.tracking_date.isoformat() 
         
         threading.Thread(target=self._save_plant_thread, args=(plant_name, track_date_str), daemon=True).start()
@@ -353,10 +389,8 @@ class PlantTrackerLayout(BoxLayout):
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    # Now we pass track_date_str directly into the database
                     cursor.execute("INSERT INTO eaten_log (log_date, plant_name) VALUES (%s, %s)", 
                                    (track_date_str, plant_name))
-            # After saving, trigger a UI update
             self.update_ui()
         except Exception as e:
             print(f"Database error: {e}")
@@ -391,7 +425,6 @@ class PlantTrackerLayout(BoxLayout):
                                       GROUP BY log_date''', (start_date.isoformat(),))
                     heatmap_data = {row[0].isoformat(): row[1] for row in cursor.fetchall()}
 
-            # Safely hand the fetched data back to the main UI thread using Kivy's Clock
             Clock.schedule_once(lambda dt: self._apply_ui_updates(weekly_data, daily_data, heatmap_data, start_date, total_weeks, today), 0)
         except Exception as e:
             print(f"Database error: {e}")
