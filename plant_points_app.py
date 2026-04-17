@@ -40,7 +40,7 @@ class SearchableDropDown(TextInput):
         self.background_color = (1, 1, 1, 1)
         self.foreground_color = (0.1, 0.1, 0.1, 1)
         self.cursor_color = (0.2, 0.6, 0.2, 1)
-        self.padding_y = [10, 10]
+        self.padding = [10, 10]
 
     def on_text(self, _instance, value):
         self.dropdown.clear_widgets()
@@ -122,6 +122,20 @@ class PlantTrackerLayout(BoxLayout):
             with conn.cursor() as cursor:
                 cursor.execute("SELECT name, category FROM plants ORDER BY name")
                 return cursor.fetchall()
+            
+    def delete_last(self, instance):
+        """Immediately frees UI, tells DB to delete latest log in background."""
+        threading.Thread(target=self._delete_last_thread, daemon=True).start()
+
+    def _delete_last_thread(self):
+        """Executes the deletion and refreshes the UI."""
+        try:
+            with self.get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("DELETE FROM eaten_log ORDER BY id DESC LIMIT 1")
+            self.update_ui()
+        except Exception as e:
+            print(f"Database error on delete: {e}")
 
     def build_ui(self, plant_list):
         self.score_label = Label(
@@ -141,6 +155,7 @@ class PlantTrackerLayout(BoxLayout):
             hint_text="Search for a plant..."
         )
         self.add_widget(self.search_input)
+
 
         self.list_title = Label(
             text="Eaten this week:",
@@ -214,6 +229,27 @@ class PlantTrackerLayout(BoxLayout):
         self.heatmap_container.bind(minimum_width=self.heatmap_container.setter('width'))
         self.heatmap_scroll.add_widget(self.heatmap_container) 
         self.add_widget(self.heatmap_scroll)
+
+
+        bottom_bar = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
+
+        bottom_bar.add_widget(Label()) 
+        
+        self.delete_btn = Button(
+            text="Undo Last Entry",
+            size_hint_x=None,
+            width=120,
+            background_normal='',
+            background_color=(0, 0, 0, 0),
+            color=(0.6, 0.6, 0.6, 1),      
+            font_size=14
+        )
+        self.delete_btn.bind(on_release=self.delete_last)
+        
+        bottom_bar.add_widget(self.delete_btn)
+        self.add_widget(bottom_bar)
+
+
 
         self.update_ui()
 
@@ -302,14 +338,12 @@ class PlantTrackerLayout(BoxLayout):
         self.daily_label.text = "\n".join(daily_list)
         self.totals_label.text = "\n".join(totals_list)
 
-        # 1. Determine if we need to build the blank boxes (only happens on load or when a new week starts)
         needs_rebuild = False
         if not hasattr(self, 'heatmap_buttons'):
             needs_rebuild = True
         elif not hasattr(self, 'heatmap_start_date') or self.heatmap_start_date != start_date:
             needs_rebuild = True
 
-        # 2. Build the structural layout ONCE and save the buttons in a dictionary
         if needs_rebuild:
             self.heatmap_container.clear_widgets()
             self.heatmap_buttons = {}
@@ -333,8 +367,6 @@ class PlantTrackerLayout(BoxLayout):
                     
                 self.heatmap_container.add_widget(week_col)
 
-        # 3. Now, strictly update the colors of the existing buttons.
-        # This completely leaves Kivy's scrollbar untouched!
         for week in range(total_weeks):
             for day in range(7):
                 current_day = start_date + timedelta(weeks=week, days=day)
