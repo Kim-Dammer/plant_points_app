@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from dotenv import load_dotenv
 
 from kivy.app import App
+from kivy.uix.popup import Popup
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.boxlayout import BoxLayout
@@ -88,6 +89,7 @@ class PlantTrackerLayout(BoxLayout):
         self.spacing = 10
         self.padding = 10
         self.first_load = True
+        self.tracking_date = date.today()
 
         self.ensure_tables_exist()
         plant_list = self.get_all_plants()
@@ -138,14 +140,38 @@ class PlantTrackerLayout(BoxLayout):
             print(f"Database error on delete: {e}")
 
     def build_ui(self, plant_list):
+        # ---------------------------------------------------------
+        # NEW: SUBTLE, CENTERED HEADER SECTION
+        # ---------------------------------------------------------
+        
+        # 1. Subtle Date Tracking Label (Top-Left)
+        # We replace your shares `header_layout` with this standalone subtle label.
+        self.date_indicator = Label(
+            text=f"Tracking: {self.tracking_date.strftime('%b %d, %Y')}",
+            font_size=12,  # Much subtler size
+            bold=False,      # No bold text
+            color=(0.5, 0.5, 0.5, 1), # Subtle grey color
+            size_hint_y=None,
+            height=25, # Thin, subtle label
+            halign="left",
+            valign="top",  # Push text to the top within its area
+            padding=[10, 5, 0, 0] # Left/Top space from screen edge
+        )
+        self.date_indicator.bind(size=self.date_indicator.setter('text_size'))
+        self.add_widget(self.date_indicator) # Add first to appear at very top
+
+        # 2. Centered Points Label (Middle, Large)
+        # We give it its own full screen-width row. `halign='center'` handles the rest.
         self.score_label = Label(
-            text="Plant Points: Loading...", 
+            text="Plant Points: ...", 
             font_size=38, 
             bold=True,
             color=(0.15, 0.45, 0.15, 1),
-            size_hint_y=0.15
+            size_hint_y=None,
+            height=70,  # Preserve substantial size
+            halign='center' # Center the text horizontally
         )
-        self.add_widget(self.score_label)
+        self.add_widget(self.score_label) # Add second
 
         self.search_input = SearchableDropDown(
             options=plant_list,
@@ -230,11 +256,26 @@ class PlantTrackerLayout(BoxLayout):
         self.heatmap_scroll.add_widget(self.heatmap_container) 
         self.add_widget(self.heatmap_scroll)
 
-
         bottom_bar = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
 
+
+        # Calendar/Date Button (Left)
+        self.change_date_btn = Button(
+            text="📅 Change Date",
+            size_hint_x=None,
+            width=120,
+            background_normal='',
+            background_color=(0, 0, 0, 0),
+            color=(0.6, 0.6, 0.6, 1),      
+            font_size=14
+        )
+        self.change_date_btn.bind(on_release=self.open_date_picker)
+        bottom_bar.add_widget(self.change_date_btn)
+
+        # Spacer pushes Undo to the right
         bottom_bar.add_widget(Label()) 
         
+        # Undo Button (Right)
         self.delete_btn = Button(
             text="Undo Last Entry",
             size_hint_x=None,
@@ -245,29 +286,76 @@ class PlantTrackerLayout(BoxLayout):
             font_size=14
         )
         self.delete_btn.bind(on_release=self.delete_last)
-        
         bottom_bar.add_widget(self.delete_btn)
+        
         self.add_widget(bottom_bar)
-
-
-
         self.update_ui()
+
+    def open_date_picker(self, instance):
+        content = BoxLayout(orientation='vertical', spacing=10, padding=10)
+        
+        self.popup_date_label = Label(
+            text=self.tracking_date.strftime('%A, %b %d, %Y'), 
+            font_size=24, bold=True
+        )
+        content.add_widget(self.popup_date_label)
+        
+        btn_layout = BoxLayout(orientation='horizontal', spacing=10, size_hint_y=None, height=50)
+        
+        prev_btn = Button(text="< Previous Day", background_color=(0.7, 0.8, 0.7, 1))
+        prev_btn.bind(on_release=lambda x: self.change_date(-1))
+        
+        today_btn = Button(text="Today", background_color=(0.6, 0.9, 0.6, 1))
+        today_btn.bind(on_release=lambda x: self.change_date(0))
+        
+        next_btn = Button(text="Next Day >", background_color=(0.7, 0.8, 0.7, 1))
+        next_btn.bind(on_release=lambda x: self.change_date(1))
+        
+        btn_layout.add_widget(prev_btn)
+        btn_layout.add_widget(today_btn)
+        btn_layout.add_widget(next_btn)
+        content.add_widget(btn_layout)
+        
+        close_btn = Button(text="Done", size_hint_y=None, height=44, background_color=(0.4, 0.4, 0.4, 1))
+        content.add_widget(close_btn)
+        
+        self.date_popup = Popup(title="Select Tracking Date", content=content, size_hint=(0.85, 0.4))
+        close_btn.bind(on_release=self.date_popup.dismiss)
+        self.date_popup.open()
+        
+    def change_date(self, day_shift):
+        if day_shift == 0:
+            self.tracking_date = date.today()
+        else:
+            self.tracking_date += timedelta(days=day_shift)
+        
+        # Update labels
+        self.popup_date_label.text = self.tracking_date.strftime('%A, %b %d, %Y')
+        self.date_indicator.text = f"Tracking: {self.tracking_date.strftime('%b %d, %Y')}"
+        
+        # Make the indicator RED if you are logging in the past/future, GREEN if today
+        if self.tracking_date == date.today():
+            self.date_indicator.color = (0.3, 0.4, 0.3, 1) 
+        else:
+            self.date_indicator.color = (0.8, 0.2, 0.2, 1)
+
 
     def save_plant(self, plant_tuple):
         """Immediately frees the UI, saves to DB in the background."""
         plant_name = plant_tuple[0]
-        today_str = date.today().isoformat() 
+        # USE THE SELECTED DATE INSTEAD OF date.today()
+        track_date_str = self.tracking_date.isoformat() 
         
-        # Start a background thread so the app doesn't freeze
-        threading.Thread(target=self._save_plant_thread, args=(plant_name, today_str), daemon=True).start()
+        threading.Thread(target=self._save_plant_thread, args=(plant_name, track_date_str), daemon=True).start()
 
-    def _save_plant_thread(self, plant_name, today_str):
+    def _save_plant_thread(self, plant_name, track_date_str):
         """Actually talks to the remote database."""
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
+                    # Now we pass track_date_str directly into the database
                     cursor.execute("INSERT INTO eaten_log (log_date, plant_name) VALUES (%s, %s)", 
-                                   (today_str, plant_name))
+                                   (track_date_str, plant_name))
             # After saving, trigger a UI update
             self.update_ui()
         except Exception as e:
