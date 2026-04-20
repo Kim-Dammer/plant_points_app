@@ -440,7 +440,7 @@ class PlantTrackerLayout(BoxLayout):
         heading_container.bind(minimum_width=heading_container.setter('width'))
 
         self.plant_icon_left = Image(
-            source='black_white_plant.png',  
+            source='icons/black_white_plant.png',  
             size_hint_x=None, 
             width=35
         )
@@ -460,7 +460,7 @@ class PlantTrackerLayout(BoxLayout):
         self.score_label.bind(texture_size=lambda instance, size: setattr(instance, 'width', size[0]))
 
         self.plant_icon_right = Image(
-            source='black_white_plant.png',  
+            source='icons/black_white_plant.png',  
             size_hint_x=None, 
             width=35
         )
@@ -568,7 +568,7 @@ class PlantTrackerLayout(BoxLayout):
         )
         
         self.calendar_icon = Image(
-            source='calendar.png',  
+            source='icons/calendar.png',  
             size_hint_x=None, 
             width=25
         )
@@ -615,7 +615,7 @@ class PlantTrackerLayout(BoxLayout):
         )
         
         self.delete_icon = Image(
-            source='trash.png',  
+            source='icons/trash.png',  
             size_hint_x=None, 
             width=25
         )
@@ -748,11 +748,11 @@ class PlantTrackerLayout(BoxLayout):
 
         #display green plants instead of balck and white once more than 30 plants have been eaten that week
         if len(weekly_data)>= 30:
-            self.plant_icon_left.source = 'plant.png'
-            self.plant_icon_right.source = 'plant.png'
+            self.plant_icon_left.source = 'icons/plant.png'
+            self.plant_icon_right.source = 'icons/plant.png'
         else:
-            self.plant_icon_left.source = 'black_white_plant.png'
-            self.plant_icon_right.source = 'black_white_plant.png'
+            self.plant_icon_left.source = 'icons/black_white_plant.png'
+            self.plant_icon_right.source = 'icons/black_white_plant.png'
 
         # Update UI: Weekly Totals
         totals_list = ["[b]Weekly Totals:[/b]"]
