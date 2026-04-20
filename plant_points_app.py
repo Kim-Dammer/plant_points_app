@@ -11,6 +11,7 @@ from kivy.uix.label import Label
 from kivy.uix.image import Image
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.textinput import TextInput
+from kivy.uix.spinner import Spinner
 from kivy.uix.dropdown import DropDown
 from kivy.uix.scrollview import ScrollView
 from kivy.properties import ListProperty
@@ -35,6 +36,8 @@ class SearchableDropDown(TextInput):
         super().__init__(**kwargs)
         self.multiline = False
         self.dropdown = DropDown()
+        self.dropdown.direction = 'down'
+        self.dropdown.max_height = 150
         self.bind(text=self.on_text)
         self.bind(focus=self.on_focus)
         self.on_plant_selected = on_plant_selected
@@ -125,6 +128,226 @@ class PlantTrackerLayout(BoxLayout):
             with conn.cursor() as cursor:
                 cursor.execute("SELECT name, category FROM plants ORDER BY name")
                 return cursor.fetchall()
+
+    def open_manage_db_menu(self, instance):
+        """Popup to choose between Adding or Removing plants."""
+        content = BoxLayout(orientation='vertical', spacing=20, padding=20)
+        
+        add_btn = Button(
+            text="Add New Plant Species", 
+            background_color=(0.15, 0.45, 0.15, 1),
+            size_hint_y=None, height=50
+        )
+        remove_btn = Button(
+            text="Remove Plant Species", 
+            background_color=(0.6, 0.2, 0.2, 1),
+            size_hint_y=None, height=50
+        )
+        
+        content.add_widget(add_btn)
+        content.add_widget(remove_btn)
+
+        self.manage_popup = Popup(
+            title="Database Management", 
+            content=content, 
+            size_hint=(0.8, None), height=200
+        )
+        
+        add_btn.bind(on_release=self._trigger_add_flow)
+        remove_btn.bind(on_release=self._trigger_remove_flow)
+        self.manage_popup.open()
+
+    def _trigger_add_flow(self, instance):
+        self.manage_popup.dismiss()
+        self.open_add_plant_menu(instance)
+
+    def _trigger_remove_flow(self, instance):
+        self.manage_popup.dismiss()
+        self.open_remove_plant_menu()
+
+    def open_remove_plant_menu(self):
+        """UI for searching and removing a plant from the global list."""
+        content = BoxLayout(orientation='vertical', spacing=15, padding=20)
+        
+        content.add_widget(Label(text="Search for plant to remove:", size_hint_y=None, height=30))
+        
+        # We reuse your existing SearchableDropDown logic
+        plant_list = self.get_all_plants()
+        self.remove_search_input = SearchableDropDown(
+            options=plant_list,
+            on_plant_selected=self.on_plant_selected_for_removal,
+            size_hint_y=None, height=44,
+            hint_text="Type plant name..."
+        )
+        content.add_widget(self.remove_search_input)
+
+        self.remove_status_label = Label(
+            text="No plant selected", 
+            size_hint_y=None, height=40,
+            color=(0.5, 0.5, 0.5, 1), italic=True
+        )
+        content.add_widget(self.remove_status_label)
+
+        self.confirm_remove_btn = Button(
+            text="Delete from Database", 
+            background_color=(0.8, 0.2, 0.2, 1),
+            size_hint_y=None, height=45,
+            disabled=True # Only enable once a plant is picked
+        )
+        self.confirm_remove_btn.bind(on_release=self.delete_plant_from_db)
+        
+        btn_layout = BoxLayout(spacing=10, size_hint_y=None, height=45)
+        cancel_btn = Button(text="Cancel")
+        btn_layout.add_widget(cancel_btn)
+        btn_layout.add_widget(self.confirm_remove_btn)
+        
+        content.add_widget(btn_layout)
+
+        self.remove_popup = Popup(
+            title="Remove Plant Species", 
+            content=content, 
+            size_hint=(0.85, None), height=350
+        )
+        cancel_btn.bind(on_release=self.remove_popup.dismiss)
+        self.remove_popup.open()
+
+    def on_plant_selected_for_removal(self, plant_tuple):
+        """Callback when a plant is picked from the dropdown."""
+        self.selected_plant_to_remove = plant_tuple[0]
+        self.remove_status_label.text = f"Remove '{self.selected_plant_to_remove}'?"
+        self.remove_status_label.color = (0.8, 0.2, 0.2, 1)
+        self.confirm_remove_btn.disabled = False
+
+    def delete_plant_from_db(self, instance):
+        """Removes the plant and its history (due to foreign key) from the DB."""
+        plant_name = self.selected_plant_to_remove
+        try:
+            with self.get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    # Note: This will fail if there are records in eaten_log 
+                    # unless you DELETE those first or have ON DELETE CASCADE.
+                    cursor.execute("DELETE FROM eaten_log WHERE plant_name = %s", (plant_name,))
+                    cursor.execute("DELETE FROM plants WHERE name = %s", (plant_name,))
+            
+            # Refresh the dropdown options in the main UI
+            new_list = self.get_all_plants()
+            self.search_input.options = new_list
+            
+            self.remove_popup.dismiss()
+            self.update_ui()
+        except Exception as e:
+            print(f"Error removing plant: {e}")
+            self.remove_status_label.text = "Error: Could not delete."
+
+
+
+    def open_add_plant_menu(self, instance):
+        """Opens a nicely styled popup to enter a new plant."""
+        # 1. Main container with more breathing room (padding/spacing)
+        content = BoxLayout(orientation='vertical', spacing=15, padding=20)
+        
+        self.new_plant_input = TextInput(
+            size_hint_y=None, height=40, multiline=False, 
+            hint_text="e.g., Sweet Potato",
+            padding_y=[10, 0] # Centers the text vertically inside the white box
+        )
+        content.add_widget(self.new_plant_input)
+
+        
+        self.category_spinner = Spinner(
+            text='Select a Category...',
+            values=('Vegetable', 'Fruit', 'Legume', 'Nut/Seed', 'Whole Grain', 'Herb/Spice'),
+            size_hint_y=None, height=44,
+            background_normal='',
+            background_color=(0.3, 0.5, 0.3, 1), 
+            color=(1, 1, 1, 1),
+            bold=True
+        )
+        content.add_widget(self.category_spinner)
+
+        content.add_widget(Label(size_hint_y=None, height=5))
+
+        self.dynamic_status_label = Label(
+            text="Waiting for input...", 
+            size_hint_y=None, height=20, 
+            color=(0.6, 0.6, 0.6, 1),
+            italic=True
+        )
+        content.add_widget(self.dynamic_status_label)
+
+        self.new_plant_input.bind(text=self.update_dynamic_sentence)
+        self.category_spinner.bind(text=self.update_dynamic_sentence)
+
+        btn_layout = BoxLayout(orientation='horizontal', spacing=15, size_hint_y=None, height=45)
+        
+        cancel_btn = Button(
+            text="Cancel", 
+            background_normal='', background_color=(0.4, 0.4, 0.4, 1), bold=True
+        )
+        ok_btn = Button(
+            text="Save Plant", 
+            background_normal='', background_color=(0.15, 0.45, 0.15, 1), bold=True
+        )
+        ok_btn.bind(on_release=self.save_new_plant_to_db)
+
+        btn_layout.add_widget(cancel_btn)
+        btn_layout.add_widget(ok_btn)
+        content.add_widget(btn_layout)
+
+        self.add_plant_popup = Popup(
+            title="Add New Plant", 
+            title_size=18,
+            title_align='center',
+            separator_color=(0.3, 0.5, 0.3, 1), 
+            content=content, 
+            size_hint=(0.8, None), 
+            height=360, 
+            auto_dismiss=False 
+        )
+        cancel_btn.bind(on_release=self.add_plant_popup.dismiss)
+        self.add_plant_popup.open()
+
+    def update_dynamic_sentence(self, *args):
+        """Changes the sentence label based on what the user types/selects."""
+        plant_name = self.new_plant_input.text.strip() or "[...]"
+        category = self.category_spinner.text
+        if category == 'Select a Category...':
+            category = "[...]"
+        
+        self.dynamic_status_label.text = f"Entering {plant_name} as {category} to database"
+        self.dynamic_status_label.color = (0.4, 0.4, 0.4, 1) # Reset color to grey in case of previous error
+
+    def save_new_plant_to_db(self, instance):
+        """Saves the input to the SQL database."""
+        plant_name = self.new_plant_input.text.strip().title() # Capitalizes the first letters
+        category = self.category_spinner.text
+
+        if not plant_name or category == 'Select a Category...':
+            self.dynamic_status_label.text = "Please type a name and pick a category!"
+            self.dynamic_status_label.color = (0.8, 0.2, 0.2, 1) # Red error text
+            return
+
+        try:
+            with self.get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "INSERT IGNORE INTO plants (name, category) VALUES (%s, %s)",
+                        (plant_name, category)
+                    )
+            
+
+            plant_list = self.get_all_plants()
+            if hasattr(self.search_input, 'options'):
+                self.search_input.options = plant_list
+            elif hasattr(self.search_input, 'update_options'):
+                self.search_input.update_options(plant_list)
+
+            self.add_plant_popup.dismiss()
+            
+        except Exception as e:
+            print(f"Error adding to database: {e}")
+            self.dynamic_status_label.text = "Database Error!"
+            self.dynamic_status_label.color = (0.8, 0.2, 0.2, 1)        
             
     def open_delete_menu(self, instance):
         """Fetches plants for the current tracking date and shows a delete list."""
@@ -217,7 +440,7 @@ class PlantTrackerLayout(BoxLayout):
         heading_container.bind(minimum_width=heading_container.setter('width'))
 
         self.plant_icon_left = Image(
-            source='plant.png',  
+            source='black_white_plant.png',  
             size_hint_x=None, 
             width=35
         )
@@ -237,7 +460,7 @@ class PlantTrackerLayout(BoxLayout):
         self.score_label.bind(texture_size=lambda instance, size: setattr(instance, 'width', size[0]))
 
         self.plant_icon_right = Image(
-            source='plant.png',  
+            source='black_white_plant.png',  
             size_hint_x=None, 
             width=35
         )
@@ -249,7 +472,7 @@ class PlantTrackerLayout(BoxLayout):
         self.add_widget(heading_container)
 
         # Dropdown search for plants
-        
+    
         self.search_input = SearchableDropDown(
             options=plant_list,
             on_plant_selected=self.save_plant, 
@@ -368,8 +591,21 @@ class PlantTrackerLayout(BoxLayout):
         
         bottom_bar.add_widget(date_btn_container)
 
-        bottom_bar.add_widget(Label()) 
+        bottom_bar.add_widget(Label(size_hint_x=1)) 
         
+        self.manage_db_btn = Button(
+            text="Manage Database",
+            size_hint_x=None,
+            width=120,
+            background_normal='',
+            background_color=(0, 0, 0, 0),
+            color=(0.15, 0.45, 0.15, 1), 
+            font_size=14
+        )
+        self.manage_db_btn.bind(on_release=self.open_manage_db_menu)
+        bottom_bar.add_widget(self.manage_db_btn)
+
+        bottom_bar.add_widget(Label(size_hint_x=1))
 
         delete_btn_container = BoxLayout(
             orientation='horizontal', 
@@ -509,6 +745,14 @@ class PlantTrackerLayout(BoxLayout):
         """Runs on the main thread. Safely updates the Kivy widgets."""
         # Update UI: Points
         self.score_label.text = f"Plant Points: {len(weekly_data)}"
+
+        #display green plants instead of balck and white once more than 30 plants have been eaten that week
+        if len(weekly_data)>= 30:
+            self.plant_icon_left.source = 'plant.png'
+            self.plant_icon_right.source = 'plant.png'
+        else:
+            self.plant_icon_left.source = 'black_white_plant.png'
+            self.plant_icon_right.source = 'black_white_plant.png'
 
         # Update UI: Weekly Totals
         totals_list = ["[b]Weekly Totals:[/b]"]
