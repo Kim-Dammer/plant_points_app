@@ -1,5 +1,6 @@
 import os
 import pymysql
+import sqlite3
 import threading
 from datetime import date, timedelta
 from dotenv import load_dotenv
@@ -20,7 +21,6 @@ from kivy.clock import Clock
 
 Window.clearcolor = (0.92, 0.97, 0.92, 1)
 
-# Load the variables from the .env file
 load_dotenv()
 
 DB_HOST = os.getenv('DB_HOST')
@@ -28,6 +28,7 @@ DB_USER = os.getenv('DB_USER')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 DB_NAME = os.getenv('DB_NAME')
 DB_PORT = 3306
+SQLITE_PATH = "local_PlantBackup.db"
 
 class SearchableDropDown(TextInput):
     options = ListProperty([])
@@ -96,32 +97,83 @@ class PlantTrackerLayout(BoxLayout):
         self.tracking_date = date.today()
 
         self.ensure_tables_exist()
+        self.init_local_sqlite()
         plant_list = self.get_all_plants()
+        threading.Thread(target=self.backup_to_sqlite, daemon=True).start()
         self.build_ui(plant_list)
 
     def get_db_connection(self):
         return pymysql.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME,
-            port=DB_PORT,
-            autocommit=True 
+            host=DB_HOST, user=DB_USER, password=DB_PASSWORD,
+            database=DB_NAME, port=DB_PORT, autocommit=True 
         )
+    
+    def init_local_sqlite(self):
+        """Creates the local backup file and tables if they don't exist."""
+        conn = sqlite3.connect(SQLITE_PATH)
+        cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS plants (
+                            name TEXT PRIMARY KEY, 
+                            category TEXT
+                        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS eaten_log (
+                            id INTEGER PRIMARY KEY, 
+                            log_date TEXT, 
+                            plant_name TEXT
+                        )''')
+        conn.commit()
+        conn.close()
+
+    def backup_to_sqlite(self):
+        """Downloads all data from MySQL and mirrors it in SQLite."""
+        try:
+            with self.get_db_connection() as remote_conn:
+                with remote_conn.cursor() as cursor:
+                    cursor.execute("SELECT name, category FROM plants")
+                    all_plants = cursor.fetchall()
+                    
+                    cursor.execute("SELECT id, log_date, plant_name FROM eaten_log")
+                    all_logs = cursor.fetchall()
+
+            local_conn = sqlite3.connect(SQLITE_PATH)
+            local_cursor = local_conn.cursor()
+            local_cursor.execute("SELECT COUNT(*) FROM plants")
+            print(f"SQLite backup verified: {local_cursor.fetchone()[0]} plants stored.")
+            local_cursor.execute("SELECT COUNT(*) FROM eaten_log")
+            print(f"SQLite backup verified: {local_cursor.fetchone()[0]} log entries stored.")
+            
+            local_cursor.execute("DELETE FROM plants")
+            local_cursor.execute("DELETE FROM eaten_log")
+            
+            local_cursor.executemany("INSERT INTO plants (name, category) VALUES (?, ?)", all_plants)
+            
+            formatted_logs = [(l[0], l[1].isoformat() if hasattr(l[1], 'isoformat') else l[1], l[2]) for l in all_logs]
+            local_cursor.executemany("INSERT INTO eaten_log (id, log_date, plant_name) VALUES (?, ?, ?)", formatted_logs)
+            
+            local_conn.commit()
+            local_conn.close()
+            print("Successfully backed up remote DB to local SQLite.")
+        except Exception as e:
+            print(f"Backup failed: {e}. (App will still run using remote connection if available)")
+
 
     def ensure_tables_exist(self):
-        with self.get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute('''CREATE TABLE IF NOT EXISTS plants (
-                                    name VARCHAR(255) PRIMARY KEY, 
-                                    category VARCHAR(255)
-                                )''')
-                cursor.execute('''CREATE TABLE IF NOT EXISTS eaten_log (
-                                    id INT AUTO_INCREMENT PRIMARY KEY, 
-                                    log_date DATE, 
-                                    plant_name VARCHAR(255),
-                                    FOREIGN KEY(plant_name) REFERENCES plants(name)
-                                )''')
+        try:
+            with self.get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute('''CREATE TABLE IF NOT EXISTS plants (
+                                        name VARCHAR(255) PRIMARY KEY, 
+                                        category VARCHAR(255)
+                                    )''')
+                    cursor.execute('''CREATE TABLE IF NOT EXISTS eaten_log (
+                                        id INT AUTO_INCREMENT PRIMARY KEY, 
+                                        log_date DATE, 
+                                        plant_name VARCHAR(255),
+                                        FOREIGN KEY(plant_name) REFERENCES plants(name)
+                                    )''')
+        except Exception as e:
+            print(f"Could not connect to remote DB to check tables: {e}")
+
 
     def get_all_plants(self):
         with self.get_db_connection() as conn:
@@ -129,41 +181,34 @@ class PlantTrackerLayout(BoxLayout):
                 cursor.execute("SELECT name, category FROM plants ORDER BY name")
                 return cursor.fetchall()
 
-    def open_manage_db_menu(self, instance):
-        """Popup to choose between Adding or Removing plants."""
-        content = BoxLayout(orientation='vertical', spacing=20, padding=20)
-        
-        add_btn = Button(
-            text="Add New Plant Species", 
-            background_color=(0.15, 0.45, 0.15, 1),
-            size_hint_y=None, height=50
-        )
-        remove_btn = Button(
-            text="Remove Plant Species", 
-            background_color=(0.6, 0.2, 0.2, 1),
-            size_hint_y=None, height=50
-        )
-        
-        content.add_widget(add_btn)
-        content.add_widget(remove_btn)
+    def get_all_plants(self):
+        try:
+            with self.get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT name, category FROM plants ORDER BY name")
+                    return cursor.fetchall()
+        except:
+            conn = sqlite3.connect(SQLITE_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, category FROM plants ORDER BY name")
+            data = cursor.fetchall()
+            conn.close()
+            return data
 
-        self.manage_popup = Popup(
-            title="Database Management", 
-            content=content, 
-            size_hint=(0.8, None), height=200
-        )
-        
-        add_btn.bind(on_release=self._trigger_add_flow)
-        remove_btn.bind(on_release=self._trigger_remove_flow)
+    def open_manage_db_menu(self, instance):
+        content = BoxLayout(orientation='vertical', spacing=20, padding=20)
+        add_btn = Button(text="Add New Plant Species", background_color=(0.15, 0.45, 0.15, 1), size_hint_y=None, height=50)
+        remove_btn = Button(text="Remove Plant Species", background_color=(0.6, 0.2, 0.2, 1), size_hint_y=None, height=50)
+        content.add_widget(add_btn); content.add_widget(remove_btn)
+        self.manage_popup = Popup(title="Database Management", content=content, size_hint=(0.8, None), height=200)
+        add_btn.bind(on_release=self._trigger_add_flow); remove_btn.bind(on_release=self._trigger_remove_flow)
         self.manage_popup.open()
 
     def _trigger_add_flow(self, instance):
-        self.manage_popup.dismiss()
-        self.open_add_plant_menu(instance)
+        self.manage_popup.dismiss(); self.open_add_plant_menu(instance)
 
     def _trigger_remove_flow(self, instance):
-        self.manage_popup.dismiss()
-        self.open_remove_plant_menu()
+        self.manage_popup.dismiss(); self.open_remove_plant_menu()
 
     def open_remove_plant_menu(self):
         """UI for searching and removing a plant from the global list."""
@@ -171,7 +216,6 @@ class PlantTrackerLayout(BoxLayout):
         
         content.add_widget(Label(text="Search for plant to remove:", size_hint_y=None, height=30))
         
-        # We reuse your existing SearchableDropDown logic
         plant_list = self.get_all_plants()
         self.remove_search_input = SearchableDropDown(
             options=plant_list,
@@ -192,7 +236,7 @@ class PlantTrackerLayout(BoxLayout):
             text="Delete from Database", 
             background_color=(0.8, 0.2, 0.2, 1),
             size_hint_y=None, height=45,
-            disabled=True # Only enable once a plant is picked
+            disabled=True 
         )
         self.confirm_remove_btn.bind(on_release=self.delete_plant_from_db)
         
@@ -224,12 +268,9 @@ class PlantTrackerLayout(BoxLayout):
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    # Note: This will fail if there are records in eaten_log 
-                    # unless you DELETE those first or have ON DELETE CASCADE.
                     cursor.execute("DELETE FROM eaten_log WHERE plant_name = %s", (plant_name,))
                     cursor.execute("DELETE FROM plants WHERE name = %s", (plant_name,))
             
-            # Refresh the dropdown options in the main UI
             new_list = self.get_all_plants()
             self.search_input.options = new_list
             
@@ -243,7 +284,6 @@ class PlantTrackerLayout(BoxLayout):
 
     def open_add_plant_menu(self, instance):
         """Opens a nicely styled popup to enter a new plant."""
-        # 1. Main container with more breathing room (padding/spacing)
         content = BoxLayout(orientation='vertical', spacing=15, padding=20)
         
         self.new_plant_input = TextInput(
