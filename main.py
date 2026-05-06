@@ -751,6 +751,8 @@ class PlantTrackerLayout(BoxLayout):
         else:
             self.date_indicator.color = (0.8, 0.2, 0.2, 1)
 
+        self.update_ui()
+
 
     def save_plant(self, plant_tuple):
         """Immediately frees the UI, saves to DB in the background."""
@@ -775,49 +777,53 @@ class PlantTrackerLayout(BoxLayout):
         threading.Thread(target=self._fetch_data_thread, daemon=True).start()
 
     def _fetch_data_thread(self):
-        """Talks to the remote database to pull the latest stats."""
-        today = date.today()
-        monday = today - timedelta(days=today.weekday())
+        anchor = self.tracking_date 
+        monday = anchor - timedelta(days=anchor.weekday())
         sunday = monday + timedelta(days=6)
+        
+        today_real = date.today()
         total_weeks = 12 
-        start_date = monday - timedelta(weeks=total_weeks - 1)
+        heatmap_start = (today_real - timedelta(days=today_real.weekday())) - timedelta(weeks=total_weeks - 1)
         
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute('''SELECT plant_name, COUNT(*) FROM eaten_log 
-                                      WHERE log_date BETWEEN %s AND %s 
-                                      GROUP BY plant_name''', (monday.isoformat(), sunday.isoformat()))
+                                    WHERE log_date BETWEEN %s AND %s 
+                                    GROUP BY plant_name''', (monday.isoformat(), sunday.isoformat()))
                     weekly_data = cursor.fetchall()
                     
                     cursor.execute('''SELECT log_date, plant_name, COUNT(*) FROM eaten_log 
-                                      WHERE log_date BETWEEN %s AND %s 
-                                      GROUP BY log_date, plant_name''', (monday.isoformat(), sunday.isoformat()))
+                                    WHERE log_date BETWEEN %s AND %s 
+                                    GROUP BY log_date, plant_name''', (monday.isoformat(), sunday.isoformat()))
                     daily_data = cursor.fetchall()
                     
+                    # Keep heatmap data based on real history
                     cursor.execute('''SELECT log_date, COUNT(*) FROM eaten_log 
-                                      WHERE log_date >= %s 
-                                      GROUP BY log_date''', (start_date.isoformat(),))
+                                    WHERE log_date >= %s 
+                                    GROUP BY log_date''', (heatmap_start.isoformat(),))
                     heatmap_data = {row[0].isoformat(): row[1] for row in cursor.fetchall()}
 
-            Clock.schedule_once(lambda dt: self._apply_ui_updates(weekly_data, daily_data, heatmap_data, start_date, total_weeks, today), 0)
+            Clock.schedule_once(lambda dt: self._apply_ui_updates(weekly_data, daily_data, heatmap_data, heatmap_start, total_weeks, anchor), 0)
         except Exception as e:
             print(f"Database error: {e}")
 
-    def _apply_ui_updates(self, weekly_data, daily_data, heatmap_data, start_date, total_weeks, today):
+    def _apply_ui_updates(self, weekly_data, daily_data, heatmap_data, start_date, total_weeks, anchor_date):
         """Runs on the main thread. Safely updates the Kivy widgets."""
-        # Update UI: Points
+        real_today = date.today()
+        
         self.score_label.text = f"Plant Points: {len(weekly_data)}"
 
-        #display green plants instead of balck and white once more than 30 plants have been eaten that week
-        if len(weekly_data)>= 30:
+        monday = anchor_date - timedelta(days=anchor_date.weekday())
+        self.list_title.text = f"Eaten Week of {monday.strftime('%b %d')}:"
+
+        if len(weekly_data) >= 30:
             self.plant_icon_left.source = 'icons/plant.png'
             self.plant_icon_right.source = 'icons/plant.png'
         else:
             self.plant_icon_left.source = 'icons/black_white_plant.png'
             self.plant_icon_right.source = 'icons/black_white_plant.png'
 
-        # Update UI: Weekly Totals
         totals_list = ["[b]Weekly Totals:[/b]"]
         weekly_totals = 0
         for plant_name, count in weekly_data:
@@ -826,26 +832,29 @@ class PlantTrackerLayout(BoxLayout):
         totals_list[0] = f"[b]Weekly Totals ({weekly_totals})[/b]"
 
 
-        # Update UI: Daily Breakdown
-        days_order = [(today - timedelta(days=i)).strftime('%A') for i in range(7)]
+        current_weekday_index = anchor_date.weekday()
+        days_order = [(anchor_date - timedelta(days=i)).strftime('%A') for i in range(current_weekday_index + 1)]
+        
         daily_breakdown = {day: [] for day in days_order}
         daily_totals = {day: 0 for day in days_order}
         
         for log_date, plant_name, count in daily_data:
             day_name = log_date.strftime('%A')
-            daily_breakdown[day_name].append(f"  • {plant_name} ({count}x)")
-            daily_totals[day_name] += count
+            if day_name in daily_breakdown:
+                daily_breakdown[day_name].append(f"  • {plant_name} ({count}x)")
+                daily_totals[day_name] += count
                     
         daily_list = []
         for day in days_order:
             if daily_breakdown[day]:
                 daily_list.append(f"[b]{day} ({daily_totals[day]})[/b]")
                 daily_list.extend(daily_breakdown[day])
-                daily_list.append("") 
+                daily_list.append("")
 
         self.daily_label.text = "\n".join(daily_list)
         self.totals_label.text = "\n".join(totals_list)
 
+        # --- Heatmap Logic ---
         needs_rebuild = False
         if not hasattr(self, 'heatmap_buttons'):
             needs_rebuild = True
@@ -886,12 +895,12 @@ class PlantTrackerLayout(BoxLayout):
 
                 count = heatmap_data.get(day_str, 0)
                 
-                if current_day > today:
-                    color = (1, 1, 1, 0) 
+                if current_day > real_today:
+                    color = (1, 1, 1, 0)
                 elif count == 0:
-                    color = (0.85, 0.9, 0.85, 1) 
+                    color = (0.85, 0.9, 0.85, 1)
                 elif count >= 12:
-                    color = (0.0, 0.81, 0.82, 1) 
+                    color = (0.0, 0.81, 0.82, 1)
                 else:
                     fraction = count / 11.0
                     r = 0.7 + (0.1 - 0.7) * fraction
@@ -901,6 +910,7 @@ class PlantTrackerLayout(BoxLayout):
 
                 box.background_color = color
 
+            
 class MyApp(App):
     def build(self):
         return PlantTrackerLayout()
