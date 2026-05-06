@@ -1,9 +1,9 @@
+import glob
 import os
 import pymysql
 import sqlite3
 import threading
 from datetime import date, timedelta
-from dotenv import load_dotenv
 
 from kivy.app import App
 from kivy.uix.popup import Popup
@@ -21,14 +21,37 @@ from kivy.clock import Clock
 
 Window.clearcolor = (0.92, 0.97, 0.92, 1)
 
-load_dotenv()
+def load_dotenv_manual():
+    possible_paths = [
+        os.path.join(os.getcwd(), 'config.env'),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.env'),
+    ]
+    for env_path in possible_paths:
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, _, value = line.partition('=')
+                        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+            print(f"DEBUG: loaded config.env from {env_path}")
+            return
+    print(f"WARNING: config.env not found in any of: {possible_paths}")
+load_dotenv_manual()
 
 DB_HOST = os.getenv('DB_HOST')
 DB_USER = os.getenv('DB_USER')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 DB_NAME = os.getenv('DB_NAME')
 DB_PORT = 3306
-SQLITE_PATH = "local_PlantBackup.db"
+
+print(f"DEBUG: DB_HOST={DB_HOST}, DB_USER={DB_USER}, DB_NAME={DB_NAME}")
+
+if 'ANDROID_ARGUMENT' in os.environ:
+    SQLITE_PATH = os.path.join(os.getcwd(), "local_PlantBackup.db")
+else:
+    SQLITE_PATH = "local_PlantBackup.db"
+
 
 class SearchableDropDown(TextInput):
     options = ListProperty([])
@@ -796,9 +819,13 @@ class PlantTrackerLayout(BoxLayout):
 
         # Update UI: Weekly Totals
         totals_list = ["[b]Weekly Totals:[/b]"]
+        weekly_totals = 0
         for plant_name, count in weekly_data:
             totals_list.append(f"• {plant_name} ({count}x)")
-            
+            weekly_totals += count
+        totals_list[0] = f"[b]Weekly Totals ({weekly_totals})[/b]"
+
+
         # Update UI: Daily Breakdown
         days_order = [(today - timedelta(days=i)).strftime('%A') for i in range(7)]
         daily_breakdown = {day: [] for day in days_order}
