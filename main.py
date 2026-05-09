@@ -76,7 +76,15 @@ class SearchableDropDown(TextInput):
 
     def on_text(self, _instance, value):
         self.dropdown.clear_widgets()
-        filtered = [opt for opt in self.options if value.lower() in str(opt[0]).lower()] if value else self.options
+        if value:
+            v = value.lower()
+            starts = [opt for opt in self.options if str(opt[0]).lower().startswith(v)]
+            contains = [opt for opt in self.options if v in str(opt[0]).lower() and not str(opt[0]).lower().startswith(v)]
+            filtered = starts + contains
+        else:
+            filtered = self.options
+
+        
         for opt in filtered:
             btn = Button(text=f"{opt[0]}", size_hint_y=None, height='45dp', font_size='15sp', background_color=(0.6, 0.9, 0.6, 1))
             btn.bind(on_release=lambda _, o=opt: self.select_option(o))
