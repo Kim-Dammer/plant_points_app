@@ -46,13 +46,16 @@ DB_NAME = os.getenv('DB_NAME')
 DB_PORT = 3306
 
 # Dynamic Pathing for Laptop vs Android
-SQLITE_PATH = None  
+# NOTE: On Android, App.get_running_app() is None at import time, so we
+# resolve the path lazily inside PlantTrackerLayout.__init__ instead.
+SQLITE_PATH = None  # set at runtime by _resolve_sqlite_path()
 
 def _resolve_sqlite_path():
     if platform == 'android':
         app = App.get_running_app()
         if app is not None:
             return os.path.join(app.user_data_dir, "local_PlantBackup.db")
+        # Fallback: use the current working directory (writable on Android)
         return os.path.join(os.getcwd(), "local_PlantBackup.db")
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_PlantBackup.db")
 
@@ -64,7 +67,7 @@ class SearchableDropDown(TextInput):
         super().__init__(**kwargs)
         self.multiline = False
         self.dropdown = DropDown()
-        self.dropdown.max_height = 150
+        self.dropdown.max_height = 400
         self.bind(text=self.on_text, focus=self.on_focus)
         self.on_plant_selected = on_plant_selected
         self.background_color = (1, 1, 1, 1)
@@ -75,7 +78,7 @@ class SearchableDropDown(TextInput):
         self.dropdown.clear_widgets()
         filtered = [opt for opt in self.options if value.lower() in str(opt[0]).lower()] if value else self.options
         for opt in filtered:
-            btn = Button(text=f"{opt[0]}", size_hint_y=None, height=50, background_color=(0.6, 0.9, 0.6, 1))
+            btn = Button(text=f"{opt[0]}", size_hint_y=None, height='45dp', font_size='15sp', background_color=(0.6, 0.9, 0.6, 1))
             btn.bind(on_release=lambda _, o=opt: self.select_option(o))
             self.dropdown.add_widget(btn)
         if filtered and self.focus:
@@ -162,7 +165,7 @@ class PlantTrackerLayout(BoxLayout):
         self.add_widget(heading)
 
         # 3. Search Bar
-        self.search_input = SearchableDropDown(options=plant_list, on_plant_selected=self.save_plant, size_hint_y=None, height='44dp', hint_text="Search for a plant...")
+        self.search_input = SearchableDropDown(options=plant_list, on_plant_selected=self.save_plant, size_hint_y=None, height='45dp', hint_text="Search for a plant...", font_size='16sp')
         self.add_widget(self.search_input)
 
         # 4. List Area
@@ -188,6 +191,8 @@ class PlantTrackerLayout(BoxLayout):
         self.totals_label.bind(width=lambda *args: self.totals_label.setter('text_size')(self.totals_label, (self.totals_label.width, None)), 
                               texture_size=lambda *args: self.totals_label.setter('height')(self.totals_label, self.totals_label.texture_size[1]))
 
+        # Wrap each label in an AnchorLayout (size_hint_y=None, height = taller of the two)
+        # so both columns are top-aligned without breaking minimum_height or the bottom bar.
         self.daily_anchor = AnchorLayout(anchor_x='left', anchor_y='top', size_hint_y=None, height=1)
         self.daily_anchor.add_widget(self.daily_label)
         self.daily_label.bind(height=lambda inst, val: self._sync_anchor_heights())
@@ -251,6 +256,7 @@ class PlantTrackerLayout(BoxLayout):
         right_anchor = AnchorLayout(anchor_x='right', anchor_y='center')
         right_btn = make_icon_btn('icons/trash.png', 'Delete', (0.4,0.4,0.4,1), False, self.open_delete_menu, halign='right')
         
+        # Shrink-wrap the button so the anchor can move it to the far right
         right_btn.size_hint_x = None
         right_btn.bind(minimum_width=right_btn.setter('width'))
         
@@ -273,12 +279,14 @@ class PlantTrackerLayout(BoxLayout):
             self.date_indicator.color = (0.15, 0.45, 0.15, 1)
 
     def _sync_anchor_heights(self):
+        # Both anchor wrappers must share the same height (the taller column)
+        # so minimum_height reflects the full content and scrolling works correctly.
         h = max(self.daily_label.height, self.totals_label.height)
         self.daily_anchor.height = h
         self.totals_anchor.height = h
 
     def adjust_layout(self, instance, width, height):
-        # Adjust ratios for mobile vs laptop
+        # Keep horizontal but adjust ratios for mobile vs laptop
         if width < height:
             self.daily_anchor.size_hint_x = 0.55
             self.totals_anchor.size_hint_x = 0.45
@@ -326,6 +334,8 @@ class PlantTrackerLayout(BoxLayout):
         # Daily List (Left side)
         days_since_monday = anchor_date.weekday()
 
+        # 2. Start at 0 (Today) and go up to days_since_monday (Monday)
+        # i=0 is anchor_date, i=1 is yesterday, etc.
         days = [(anchor_date - timedelta(days=i)).strftime('%A') for i in range(days_since_monday + 1)]
 
         db = {day: [] for day in days}; dt = {day: 0 for day in days}
@@ -398,7 +408,7 @@ class PlantTrackerLayout(BoxLayout):
             self.search_input.options = self.get_all_plants(); self.a_pop.dismiss()
 
     def open_rem_menu(self):
-        c = BoxLayout(orientation='vertical', spacing=10, padding=15); self.r_in = SearchableDropDown(options=self.get_all_plants(), on_plant_selected=self._on_r_sel, size_hint_y=None, height=44); self.r_btn = Button(text="Delete", disabled=True, background_color=(0.8,0.2,0.2,1), size_hint_y=None, height=45); self.r_btn.bind(on_release=self._do_rem); c.add_widget(Label(text="Select plant:")); c.add_widget(self.r_in); c.add_widget(self.r_btn)
+        c = BoxLayout(orientation='vertical', spacing=10, padding=15); self.r_in = SearchableDropDown(options=self.get_all_plants(), on_plant_selected=self._on_r_sel, size_hint_y=None, height='52dp'); self.r_btn = Button(text="Delete", disabled=True, background_color=(0.8,0.2,0.2,1), size_hint_y=None, height=45); self.r_btn.bind(on_release=self._do_rem); c.add_widget(Label(text="Select plant:")); c.add_widget(self.r_in); c.add_widget(self.r_btn)
         self.r_pop = Popup(title="Remove Species", content=c, size_hint=(0.8, None), height=250); self.r_pop.open()
 
     def _on_r_sel(self, p): self.sel_r = p[0]; self.r_btn.disabled = False
