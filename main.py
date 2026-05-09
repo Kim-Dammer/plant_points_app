@@ -45,10 +45,16 @@ DB_PASSWORD = os.getenv('DB_PASSWORD')
 DB_NAME = os.getenv('DB_NAME')
 DB_PORT = 3306
 
-if platform == 'android':
-    SQLITE_PATH = os.path.join(App.get_running_app().user_data_dir, "local_PlantBackup.db")
-else:
-    SQLITE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_PlantBackup.db")
+# Dynamic Pathing for Laptop vs Android
+SQLITE_PATH = None  
+
+def _resolve_sqlite_path():
+    if platform == 'android':
+        app = App.get_running_app()
+        if app is not None:
+            return os.path.join(app.user_data_dir, "local_PlantBackup.db")
+        return os.path.join(os.getcwd(), "local_PlantBackup.db")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_PlantBackup.db")
 
 
 class SearchableDropDown(TextInput):
@@ -92,6 +98,9 @@ class PlantTrackerLayout(BoxLayout):
         self.padding = 10
         self.tracking_date = date.today()
 
+        global SQLITE_PATH
+        SQLITE_PATH = _resolve_sqlite_path()
+
         self.init_local_sqlite()
         plant_list = self.get_all_plants()
         threading.Thread(target=self.backup_to_sqlite, daemon=True).start()
@@ -130,7 +139,7 @@ class PlantTrackerLayout(BoxLayout):
             conn = sqlite3.connect(SQLITE_PATH); data = conn.execute("SELECT name, category FROM plants ORDER BY name").fetchall(); conn.close(); return data
 
     def build_ui(self, plant_list):
-        # 1. Date Indicator 
+        # 1. Date Indicator (Top Right Corner)
         date_anchor = AnchorLayout(anchor_x='left', anchor_y='top', size_hint_y=None, height='30dp')
         self.date_indicator = Label(
             text=f"Tracking: {self.tracking_date.strftime('%b %d, %Y')}",
@@ -163,6 +172,7 @@ class PlantTrackerLayout(BoxLayout):
         self.add_widget(self.list_title)
 
         self.scroll_view = ScrollView(size_hint_y=0.45) 
+        # list_container holds the Daily (Left) and Weekly (Right) columns
         self.list_container = BoxLayout(orientation='horizontal', size_hint_y=None, spacing='20dp', padding=['15dp', 0])
         self.list_container.bind(minimum_height=self.list_container.setter('height'))
         
@@ -229,7 +239,7 @@ class PlantTrackerLayout(BoxLayout):
  # 6. Bottom Bar — Date (left), Database (centre, text only), Delete Entries (right)
         b_bar = BoxLayout(orientation='horizontal', size_hint_y=None, height='55dp', padding='5dp')
 
-        # Left: Date icon + label,
+        # Left: Date icon + label, anchored left
         left_anchor = AnchorLayout(anchor_x='left', anchor_y='center')
         left_anchor.add_widget(make_icon_btn('icons/calendar.png', 'Date', (0.4,0.4,0.4,1), False, self.open_date_picker))
 
@@ -237,9 +247,9 @@ class PlantTrackerLayout(BoxLayout):
         centre_anchor = AnchorLayout(anchor_x='center', anchor_y='center')
         centre_anchor.add_widget(make_text_btn('Manage Database', (0,0,0,1), False, self.open_manage_db_menu))
 
-        # Right: Delete Entries icon + label
+        # Right: Delete Entries icon + label, anchored right
         right_anchor = AnchorLayout(anchor_x='right', anchor_y='center')
-        right_btn = make_icon_btn('icons/trash.png', 'Delete Entries', (0.4,0.4,0.4,1), False, self.open_delete_menu, halign='right')
+        right_btn = make_icon_btn('icons/trash.png', 'Delete', (0.4,0.4,0.4,1), False, self.open_delete_menu, halign='right')
         
         right_btn.size_hint_x = None
         right_btn.bind(minimum_width=right_btn.setter('width'))
@@ -268,6 +278,7 @@ class PlantTrackerLayout(BoxLayout):
         self.totals_anchor.height = h
 
     def adjust_layout(self, instance, width, height):
+        # Adjust ratios for mobile vs laptop
         if width < height:
             self.daily_anchor.size_hint_x = 0.55
             self.totals_anchor.size_hint_x = 0.45
