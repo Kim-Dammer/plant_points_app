@@ -216,12 +216,21 @@ class PlantTrackerLayout(BoxLayout):
 
         # 5. Heatmap
         self.add_widget(Label(text="Activity Heatmap:", font_size='16sp', bold=True, color=(0.3, 0.4, 0.3, 1), size_hint_y=None, height='30dp', halign="left", padding=['10dp', 0]))
-        h_anchor = AnchorLayout(anchor_x='left', size_hint_y=0.2)
+        h_row = BoxLayout(orientation='horizontal', size_hint_y=0.2, spacing='8dp', padding=['0dp', 0, '8dp', 0])
         self.h_scroll = ScrollView(do_scroll_y=False, do_scroll_x=True, size_hint_x=None)
         self.h_cont = BoxLayout(orientation='horizontal', spacing='2dp', size_hint=(None, 1))
         self.h_cont.bind(minimum_width=self.h_cont.setter('width'))
-        self.h_cont.bind(width=lambda inst, val: setattr(self.h_scroll, 'width', min(val, Window.width - 20)))
-        self.h_scroll.add_widget(self.h_cont); h_anchor.add_widget(self.h_scroll); self.add_widget(h_anchor)
+        self.h_cont.bind(width=lambda inst, val: setattr(self.h_scroll, 'width', min(val, Window.width * 0.62)))
+        self.h_scroll.add_widget(self.h_cont)
+        h_row.add_widget(self.h_scroll)
+        self.h_info_label = Label(
+            text="Tap a square\nto see details", markup=True,
+            font_size='13sp', color=(0.35, 0.45, 0.35, 1),
+            halign='left', valign='middle', size_hint_x=None, width='130dp'
+        )
+        self.h_info_label.bind(size=self.h_info_label.setter('text_size'))
+        h_row.add_widget(self.h_info_label)
+        self.add_widget(h_row)
 
         # 6. Bottom Bar — Date (left), Database (centre, text only), Delete Entries (right)
         from kivy.uix.behaviors import ButtonBehavior
@@ -321,15 +330,19 @@ class PlantTrackerLayout(BoxLayout):
                     cur.execute("SELECT plant_name, COUNT(*) FROM eaten_log WHERE log_date BETWEEN %s AND %s GROUP BY plant_name", (mon, sun)); w = cur.fetchall()
                     cur.execute("SELECT log_date, plant_name, COUNT(*) FROM eaten_log WHERE log_date BETWEEN %s AND %s GROUP BY log_date, plant_name", (mon, sun)); d = cur.fetchall()
                     cur.execute("SELECT log_date, COUNT(*) FROM eaten_log WHERE log_date >= %s GROUP BY log_date", (start,)); h = {r[0].isoformat(): r[1] for r in cur.fetchall()}
-            Clock.schedule_once(lambda dt: self._apply_ui_updates(w, d, h, start, anchor), 0)
+                    cur.execute("SELECT log_date, COUNT(DISTINCT plant_name) FROM eaten_log WHERE log_date >= %s GROUP BY log_date", (start,)); hd = {r[0].isoformat(): r[1] for r in cur.fetchall()}
+            Clock.schedule_once(lambda dt: self._apply_ui_updates(w, d, h, hd, start, anchor), 0)
         except:
             conn = sqlite3.connect(SQLITE_PATH); cur = conn.cursor()
             w = cur.execute("SELECT plant_name, COUNT(*) FROM eaten_log WHERE log_date BETWEEN ? AND ? GROUP BY plant_name", (mon.isoformat(), sun.isoformat())).fetchall()
             d = [(date.fromisoformat(r[0]), r[1], r[2]) for r in cur.execute("SELECT log_date, plant_name, COUNT(*) FROM eaten_log WHERE log_date BETWEEN ? AND ? GROUP BY log_date, plant_name", (mon.isoformat(), sun.isoformat())).fetchall()]
-            h = {r[0]: r[1] for r in cur.execute("SELECT log_date, COUNT(*) FROM eaten_log WHERE log_date >= ? GROUP BY log_date", (start.isoformat(),)).fetchall()}; conn.close()
-            Clock.schedule_once(lambda dt: self._apply_ui_updates(w, d, h, start, anchor), 0)
+            h = {r[0]: r[1] for r in cur.execute("SELECT log_date, COUNT(*) FROM eaten_log WHERE log_date >= ? GROUP BY log_date", (start.isoformat(),)).fetchall()}
+            hd = {r[0]: r[1] for r in cur.execute("SELECT log_date, COUNT(DISTINCT plant_name) FROM eaten_log WHERE log_date >= ? GROUP BY log_date", (start.isoformat(),)).fetchall()}; conn.close()
+            Clock.schedule_once(lambda dt: self._apply_ui_updates(w, d, h, hd, start, anchor), 0)
 
-    def _apply_ui_updates(self, weekly_data, daily_data, heatmap_data, start_date, anchor_date):
+    def _apply_ui_updates(self, weekly_data, daily_data, heatmap_data, heatmap_distinct, start_date, anchor_date):
+        self.h_distinct = heatmap_distinct
+        self.h_total = heatmap_data
         self.score_label.text = f"Plant Points: {len(weekly_data)}"
         icon = 'icons/plant.png' if len(weekly_data) >= 30 else 'icons/black_white_plant.png'
         self.plant_icon_left.source = icon; self.plant_icon_right.source = icon
@@ -370,7 +383,9 @@ class PlantTrackerLayout(BoxLayout):
                 col = BoxLayout(orientation='vertical', spacing='2dp', size_hint=(None, 1), width='15dp')
                 for d in range(7):
                     ds = (start_date + timedelta(weeks=w, days=d)).isoformat()
-                    box = Button(background_normal='', border=(0, 0, 0, 0)); col.add_widget(box); self.h_btns[ds] = box
+                    box = Button(background_normal='', border=(0, 0, 0, 0))
+                    box.bind(on_release=lambda btn, d=ds: self._on_heatmap_tap(d))
+                    col.add_widget(box); self.h_btns[ds] = box
                 self.h_cont.add_widget(col)
         for ds, box in self.h_btns.items():
             cd = date.fromisoformat(ds); c = heatmap_data.get(ds, 0)
@@ -378,6 +393,32 @@ class PlantTrackerLayout(BoxLayout):
             elif c == 0: box.background_color = (0.85, 0.9, 0.85, 1)
             elif c >= 12: box.background_color = (0.0, 0.81, 0.82, 1)
             else: f = c / 11.0; box.background_color = (0.7 + (0.1-0.7)*f, 0.9 + (0.5-0.9)*f, 0.7 + (0.1-0.7)*f, 1)
+
+    def _on_heatmap_tap(self, ds):
+        tapped_date = date.fromisoformat(ds)
+        if tapped_date > date.today():
+            return
+        total    = getattr(self, 'h_total',    {}).get(ds, 0)
+        distinct = getattr(self, 'h_distinct', {}).get(ds, 0)
+
+        # Jump tracking date → refreshes weekly view
+        self.tracking_date = tapped_date
+        self.date_indicator.text = f"Tracking: {self.tracking_date.strftime('%b %d, %Y')}"
+        self.update_date_color()
+        if hasattr(self, 'p_date_label'):
+            self.p_date_label.text = self.tracking_date.strftime('%A, %b %d, %Y')
+        self.update_ui()
+
+        # Update the side info panel
+        friendly = tapped_date.strftime('%b %d').replace(' 0', ' ')
+        if total == 0:
+            self.h_info_label.text = f"[b]{friendly}[/b]\n\nNo plants\nlogged"
+        else:
+            self.h_info_label.text = (
+                f"[b]{friendly}[/b]\n\n"
+                f"Total: [b]{total}[/b]\n"
+                f"Unique: [b]{distinct}[/b]"
+            )
 
     def save_plant(self, plant_tuple):
         threading.Thread(target=self._save_thread, args=(plant_tuple[0], self.tracking_date.isoformat()), daemon=True).start()
