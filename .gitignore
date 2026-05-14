@@ -7,3 +7,6 @@ add_plant_to_database.py
 add_plants_yesterday.py
 delete_last_plant.py
 local_PlantBackup.db
+
+**/*.egg-info
+*.ps1
