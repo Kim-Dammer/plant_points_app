@@ -438,8 +438,8 @@ class PlantTrackerLayout(BoxLayout):
         self.date_popup = Popup(title="Select Date", content=c, size_hint=(0.85, 0.4)); d.bind(on_release=self.date_popup.dismiss); self.date_popup.open()
 
     def open_manage_db_menu(self, inst):
-        c = BoxLayout(orientation='vertical', spacing=20, padding=20); a = Button(text="Add Plant", background_color=(0.15,0.45,0.15,1), height=50); r = Button(text="Remove Plant", background_color=(0.6,0.2,0.2,1), height=50); c.add_widget(a); c.add_widget(r)
-        self.m_pop = Popup(title="Database", content=c, size_hint=(0.8, None), height=200); a.bind(on_release=self._open_add); r.bind(on_release=self._open_rem); self.m_pop.open()
+        c = BoxLayout(orientation='vertical', spacing=20, padding=20); a = Button(text="Add Plant", background_color=(0.15,0.45,0.15,1), height='65dp', font_size='18sp'); r = Button(text="Remove Plant", background_color=(0.6,0.2,0.2,1), height='65dp', font_size='18sp'); c.add_widget(a); c.add_widget(r)
+        self.m_pop = Popup(title="Database", content=c, size_hint=(0.8, None), height='280dp'); a.bind(on_release=self._open_add); r.bind(on_release=self._open_rem); self.m_pop.open()
 
     def _open_add(self, i): self.m_pop.dismiss(); self.open_add_menu()
     def _open_rem(self, i): self.m_pop.dismiss(); self.open_rem_menu()
