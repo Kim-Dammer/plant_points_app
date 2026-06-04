@@ -421,7 +421,7 @@ class PlantTrackerLayout(BoxLayout):
 
         self.p_date_label = Label(
             text=self.tracking_date.strftime('%A, %b %d, %Y'),
-            font_size=24, bold=True,
+            font_size='20sp', bold=False,
         )
         content.add_widget(self.p_date_label)
 
@@ -503,42 +503,7 @@ class PlantTrackerLayout(BoxLayout):
             db.add_plant(name, cat)
             self.search_input.options = db.get_all_plants(self.sqlite_path)
             self.a_pop.dismiss()
-
-    def open_delete_menu(self, _inst):
-        ds    = self.tracking_date.isoformat()
-        items = db.get_log_entries_for_date(self.sqlite_path, ds)
-        if not items:
-            return
-
-        content = BoxLayout(orientation='vertical', spacing=5)
-        scroll  = ScrollView()
-        lv      = BoxLayout(orientation='vertical', size_hint_y=None, spacing='5dp') # added spacing so buttons don't touch
-        lv.bind(minimum_height=lv.setter('height'))
-
-        for lid, plant_name in items:
-            btn = Button(
-                text=plant_name, size_hint_y=None, height='60dp', font_size='18sp',
-                background_color=(0.9, 0.4, 0.4, 1),
-            )
-            btn.bind(on_release=lambda _, i=lid: self._del_log(i))
-            lv.add_widget(btn)
-
-        scroll.add_widget(lv)
-        content.add_widget(scroll)
-
-        self.dl_pop = Popup(title='Delete Entry', content=content, size_hint=(0.8, 0.6))
-        self.dl_pop.open()
-
-    def _on_remove_selected(self, plant):
-        self.sel_remove = plant[0]
-        self.r_btn.disabled = False
-
-    def _do_remove(self, _inst):
-        db.remove_plant(self.sel_remove)
-        self.update_ui()
-        self.r_pop.dismiss()
-
-    # -----------------------------------------------------------------------
+ # -----------------------------------------------------------------------
     # Popups — Delete log entries
     # -----------------------------------------------------------------------
 
@@ -550,12 +515,16 @@ class PlantTrackerLayout(BoxLayout):
 
         content = BoxLayout(orientation='vertical', spacing=5)
         scroll  = ScrollView()
-        lv      = BoxLayout(orientation='vertical', size_hint_y=None)
+        
+        lv      = BoxLayout(orientation='vertical', size_hint_y=None, spacing='5dp') 
         lv.bind(minimum_height=lv.setter('height'))
 
         for lid, plant_name in items:
             btn = Button(
-                text=plant_name, size_hint_y=None, height=45,
+                text=plant_name, 
+                size_hint_y=None, 
+                height='50dp',    
+                font_size='18sp', 
                 background_color=(0.9, 0.4, 0.4, 1),
             )
             btn.bind(on_release=lambda _, i=lid: self._del_log(i))
@@ -571,3 +540,15 @@ class PlantTrackerLayout(BoxLayout):
         db.delete_log_entry(lid)
         self.update_ui()
         self.dl_pop.dismiss()
+
+    # -----------------------------------------------------------------------
+    # Manage Database - Remove Plant helpers
+    # -----------------------------------------------------------------------
+    def _on_remove_selected(self, plant):
+        self.sel_remove = plant[0]
+        self.r_btn.disabled = False
+
+    def _do_remove(self, _inst):
+        db.remove_plant(self.sel_remove)
+        self.update_ui()
+        self.r_pop.dismiss()
