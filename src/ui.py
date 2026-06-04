@@ -1,3 +1,4 @@
+from cProfile import label
 import threading
 from datetime import date, timedelta
 
@@ -424,14 +425,14 @@ class PlantTrackerLayout(BoxLayout):
         )
         content.add_widget(self.p_date_label)
 
-        nav_row = BoxLayout(orientation='horizontal', spacing=10, size_hint_y=None, height=50)
+        nav_row = BoxLayout(orientation='horizontal', spacing=10, size_hint_y=None, height='60dp')
         for label, shift in [('< Prev', -1), ('Today', 0), ('Next >', 1)]:
-            btn = Button(text=label)
+            btn = Button(text=label, font_size='16sp')
             btn.bind(on_release=lambda _, s=shift: self.change_date(s))
             nav_row.add_widget(btn)
         content.add_widget(nav_row)
 
-        done = Button(text='Done', size_hint_y=None, height=44)
+        done = Button(text='Done', size_hint_y=None, height='60dp', font_size='18sp')
         content.add_widget(done)
 
         self.date_popup = Popup(title='Select Date', content=content, size_hint=(0.85, 0.4))
@@ -456,20 +457,44 @@ class PlantTrackerLayout(BoxLayout):
 
     def _open_add_menu(self):
         content = BoxLayout(orientation='vertical', spacing=10, padding=15)
-        self.new_name     = TextInput(hint_text='Name', size_hint_y=None, height=40)
+        self.new_name     = TextInput(hint_text='Name', size_hint_y=None, height='45dp')
         self.new_category = Spinner(
             text='Category...',
             values=('Vegetable', 'Fruit', 'Legume', 'Nut/Seed', 'Whole Grain', 'Herb/Spice'),
-            size_hint_y=None, height=44,
+            size_hint_y=None, height='45dp',
         )
-        save_btn = Button(text='Save', size_hint_y=None, height=45)
+        
+        self.preview_label = Label(
+            text="Adding ... as ... in database",
+            font_size='14sp', color=(0.7, 0.7, 0.7, 1), markup=True,
+            size_hint_y=None, height='30dp', halign='center', valign='middle'
+        )
+        self.preview_label.bind(size=self.preview_label.setter('text_size'))
+
+        self.new_name.bind(text=self._update_add_preview)
+        self.new_category.bind(text=self._update_add_preview)
+
+        save_btn = Button(text='Save', size_hint_y=None, height='60dp', font_size='18sp')
         save_btn.bind(on_release=self._save_new_plant)
+        
         content.add_widget(self.new_name)
         content.add_widget(self.new_category)
+        content.add_widget(self.preview_label)  
         content.add_widget(save_btn)
 
-        self.a_pop = Popup(title='Add Species', content=content, size_hint=(0.8, None), height=250)
+        self.a_pop = Popup(title='Add Species', content=content, size_hint=(0.8, None), height='320dp')
         self.a_pop.open()
+
+    def _update_add_preview(self, *args):
+        name = self.new_name.text.strip().title()
+        if not name:
+            name = "..."
+            
+        cat = self.new_category.text
+        if cat == 'Category...':
+            cat = "..."
+            
+        self.preview_label.text = f"Adding [b]{name}[/b] as [b]{cat}[/b] in database"
 
     def _save_new_plant(self, _inst):
         name = self.new_name.text.strip().title()
@@ -479,25 +504,30 @@ class PlantTrackerLayout(BoxLayout):
             self.search_input.options = db.get_all_plants(self.sqlite_path)
             self.a_pop.dismiss()
 
-    def _open_rem_menu(self):
-        content = BoxLayout(orientation='vertical', spacing=10, padding=15)
-        self.r_input = SearchableDropDown(
-            options=db.get_all_plants(self.sqlite_path),
-            _plant_selected=self._on_remove_selected,
-            size_hint_y=None, height='52dp',
-        )
-        self.r_btn = Button(
-            text='Delete', disabled=True,
-            background_color=(0.8, 0.2, 0.2, 1),
-            size_hint_y=None, height=45,
-        )
-        self.r_btn.bind(on_release=self._do_remove)
-        content.add_widget(Label(text='Select plant:'))
-        content.add_widget(self.r_input)
-        content.add_widget(self.r_btn)
+    def open_delete_menu(self, _inst):
+        ds    = self.tracking_date.isoformat()
+        items = db.get_log_entries_for_date(self.sqlite_path, ds)
+        if not items:
+            return
 
-        self.r_pop = Popup(title='Remove Species', content=content, size_hint=(0.8, None), height=250)
-        self.r_pop.open()
+        content = BoxLayout(orientation='vertical', spacing=5)
+        scroll  = ScrollView()
+        lv      = BoxLayout(orientation='vertical', size_hint_y=None, spacing='5dp') # added spacing so buttons don't touch
+        lv.bind(minimum_height=lv.setter('height'))
+
+        for lid, plant_name in items:
+            btn = Button(
+                text=plant_name, size_hint_y=None, height='60dp', font_size='18sp',
+                background_color=(0.9, 0.4, 0.4, 1),
+            )
+            btn.bind(on_release=lambda _, i=lid: self._del_log(i))
+            lv.add_widget(btn)
+
+        scroll.add_widget(lv)
+        content.add_widget(scroll)
+
+        self.dl_pop = Popup(title='Delete Entry', content=content, size_hint=(0.8, 0.6))
+        self.dl_pop.open()
 
     def _on_remove_selected(self, plant):
         self.sel_remove = plant[0]
